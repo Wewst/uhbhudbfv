@@ -1,7 +1,6 @@
 {
-  "name": "golden-traff-backend",
+  "name": "golden-traff",
   "version": "1.0.0",
-  "description": "Бэкенд API для GOLDEN TRAFF",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
