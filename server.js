@@ -5,7 +5,7 @@ const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DEAL_AMOUNT = 9000;
+const DEAL_AMOUNT = 9500;
 const DATA_FILE = path.join(__dirname, 'data', 'deals.json');
 
 app.use(cors());
