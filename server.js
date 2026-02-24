@@ -133,10 +133,44 @@ app.post('/api/deals', (req, res) => {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2),
     username: username.startsWith('@') ? username : '@' + username,
     amount: DEAL_AMOUNT,
-    date: new Date().toISOString()
+    date: new Date().toISOString(),
+    status: 'pending'
   });
   saveDeals(deals);
   res.json({ ok: true, deals });
+});
+
+app.patch('/api/deals/:id', (req, res) => {
+  const dealId = req.params.id;
+  const { status } = req.body;
+  const deals = loadDeals();
+  const index = deals.findIndex(d => d.id === dealId);
+  
+  if (index === -1) {
+    return res.status(404).json({ error: 'Deal not found' });
+  }
+  
+  if (status && ['pending', 'success', 'failed'].includes(status)) {
+    deals[index].status = status;
+    saveDeals(deals);
+    res.json({ ok: true, deal: deals[index] });
+  } else {
+    res.status(400).json({ error: 'Invalid status' });
+  }
+});
+
+app.delete('/api/deals/:id', (req, res) => {
+  const dealId = req.params.id;
+  const deals = loadDeals();
+  const index = deals.findIndex(d => d.id === dealId);
+  
+  if (index === -1) {
+    return res.status(404).json({ error: 'Deal not found' });
+  }
+  
+  deals.splice(index, 1);
+  saveDeals(deals);
+  res.json({ ok: true });
 });
 
 app.listen(PORT, () => {
