@@ -45,32 +45,76 @@ function startOfMonth(d) {
   return x.getTime();
 }
 
+function calculateDeductions(amount) {
+  const tax = Math.round(amount * 0.06); // 6% налог
+  const leads = 500; // Оплата лидам
+  const employees = 2000; // Выплата сотрудникам
+  const totalDeductions = tax + leads + employees;
+  const final = amount - totalDeductions;
+  
+  return {
+    tax,
+    leads,
+    employees,
+    totalDeductions,
+    final
+  };
+}
+
 function getSumData(deals) {
   const now = new Date();
   const todayStart = startOfDay(now);
   const monthStart = startOfMonth(now);
-  const prevMonthStart = startOfMonth(new Date(now.getFullYear(), now.getMonth() - 1, 1));
-  const yesterdayStart = startOfDay(now.getTime() - 86400000);
 
-  let total = 0, monthSum = 0, daySum = 0, prevMonthSum = 0, yesterdaySum = 0;
+  let total = 0, monthSum = 0, daySum = 0;
+  let totalTax = 0, monthTax = 0, dayTax = 0;
+  let totalLeads = 0, monthLeads = 0, dayLeads = 0;
+  let totalEmployees = 0, monthEmployees = 0, dayEmployees = 0;
 
   for (const d of deals) {
     const amt = d.amount || DEAL_AMOUNT;
     const t = new Date(d.date).getTime();
+    const deductions = calculateDeductions(amt);
+    
     total += amt;
-    if (t >= monthStart) monthSum += amt;
-    if (t >= todayStart) daySum += amt;
-    if (t >= prevMonthStart && t < monthStart) prevMonthSum += amt;
-    if (t >= yesterdayStart && t < todayStart) yesterdaySum += amt;
+    totalTax += deductions.tax;
+    totalLeads += deductions.leads;
+    totalEmployees += deductions.employees;
+    
+    if (t >= monthStart) {
+      monthSum += amt;
+      monthTax += deductions.tax;
+      monthLeads += deductions.leads;
+      monthEmployees += deductions.employees;
+    }
+    
+    if (t >= todayStart) {
+      daySum += amt;
+      dayTax += deductions.tax;
+      dayLeads += deductions.leads;
+      dayEmployees += deductions.employees;
+    }
   }
 
   return {
     total,
     month: monthSum,
     day: daySum,
-    trendMonth: monthSum - prevMonthSum,
-    trendDay: daySum - yesterdaySum,
-    trendAll: total
+    // Общий период
+    totalTax,
+    totalLeads,
+    totalEmployees,
+    totalFinal: total - totalTax - totalLeads - totalEmployees,
+    // Месячный период
+    monthTax,
+    monthLeads,
+    monthEmployees,
+    monthFinal: monthSum - monthTax - monthLeads - monthEmployees,
+    // Дневной период
+    dayTax,
+    dayLeads,
+    dayEmployees,
+    dayFinal: daySum - dayTax - dayLeads - dayEmployees
   };
 }
 
