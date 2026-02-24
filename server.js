@@ -96,5 +96,5 @@ app.post('/api/deals', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log('GOLDEN TRAFF API:', 'http://localhost:' + PORT);
+  console.log('GOLDEN TRAFF:', 'http://localhost:' + PORT);
 });
