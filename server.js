@@ -18,6 +18,21 @@ const NOTIFICATION_BOT_TOKEN = '8671998094:AAEyg-2G8cHIoTQT3gCjm1X5QiyW31D4WQ';
 // ID админа для отправки уведомлений в ЛС (загружается из файла при запуске)
 let ADMIN_USER_ID = null;
 
+// Путь к файлу с данными (объявляем ПЕРЕД функциями, которые их используют)
+const dataDir = path.join(__dirname, 'data');
+const dealsFile = path.join(dataDir, 'deals.json');
+const tasksFile = path.join(dataDir, 'tasks.json'); // Файл для заданий
+const goalsFile = path.join(dataDir, 'goals.json'); // Файл для целей
+const usersFile = path.join(dataDir, 'users.json'); // Файл для хранения данных пользователей (для уведомлений)
+const adminIdFile = path.join(dataDir, 'adminId.json'); // Файл для хранения ID админа
+
+// Создание папки data если её нет
+function ensureDataDir() {
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+}
+
 // Загрузка ID админа из файла
 function loadAdminId() {
   ensureDataDir();
@@ -50,21 +65,6 @@ function saveAdminId(userId) {
 ADMIN_USER_ID = loadAdminId();
 if (ADMIN_USER_ID) {
   console.log('✅ ADMIN_USER_ID загружен из файла:', ADMIN_USER_ID);
-}
-
-// Путь к файлу с данными
-const dataDir = path.join(__dirname, 'data');
-const dealsFile = path.join(dataDir, 'deals.json');
-const tasksFile = path.join(dataDir, 'tasks.json'); // Файл для заданий
-const goalsFile = path.join(dataDir, 'goals.json'); // Файл для целей
-const usersFile = path.join(dataDir, 'users.json'); // Файл для хранения данных пользователей (для уведомлений)
-const adminIdFile = path.join(dataDir, 'adminId.json'); // Файл для хранения ID админа
-
-// Создание папки data если её нет
-function ensureDataDir() {
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
 }
 
 // Загрузка сделок из файла
