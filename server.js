@@ -8,37 +8,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const DEAL_AMOUNT = 9500;
 
-// Telegram Bot настройки
+// Telegram Bot настройки (жёстко прописанные данные)
 const TELEGRAM_BOT_TOKEN = '7840364464:AAEuBsIUKTnWxCnTaX0jn9WUMC5c4rp2nEk';
-
-// Загрузка Chat ID из файла или переменной окружения
-function getTelegramChatId() {
-  // Сначала проверяем переменную окружения
-  if (process.env.TELEGRAM_CHAT_ID) {
-    return process.env.TELEGRAM_CHAT_ID;
-  }
-  
-  // Потом проверяем файл
-  ensureDataDir();
-  if (fs.existsSync(telegramConfigFile)) {
-    try {
-      const data = fs.readFileSync(telegramConfigFile, 'utf8');
-      const config = JSON.parse(data);
-      if (config.chatId) {
-        return config.chatId;
-      }
-    } catch (error) {
-      console.error('Ошибка чтения telegram.json:', error);
-    }
-  }
-  
-  return '';
-}
+// Группа, куда всегда отправляем сообщения
+const TELEGRAM_CHAT_ID = '-5240130674';
 
 // Путь к файлу с данными
 const dataDir = path.join(__dirname, 'data');
 const dealsFile = path.join(dataDir, 'deals.json');
-const telegramConfigFile = path.join(dataDir, 'telegram.json');
 
 // Создание папки data если её нет
 function ensureDataDir() {
@@ -75,7 +52,7 @@ function saveDeals(deals) {
 
 // Функция отправки сообщения в Telegram
 async function sendTelegramMessage(text) {
-  const chatId = getTelegramChatId();
+  const chatId = TELEGRAM_CHAT_ID;
   if (!chatId) {
     console.log('⚠️ TELEGRAM_CHAT_ID не установлен, сообщение не отправлено:', text);
     return;
@@ -344,42 +321,15 @@ app.delete('/api/deals/:id', async (req, res) => {
   }
 });
 
-// Endpoint для сохранения Chat ID (для настройки через API)
-app.post('/api/telegram/chat-id', (req, res) => {
-  try {
-    const { chatId } = req.body;
-    if (!chatId) {
-      return res.status(400).json({ error: 'chatId is required' });
-    }
-
-    ensureDataDir();
-    const config = { chatId: String(chatId) };
-    fs.writeFileSync(telegramConfigFile, JSON.stringify(config, null, 2), 'utf8');
-    
-    console.log('✅ Telegram Chat ID сохранен:', chatId);
-    res.json({ ok: true, chatId });
-  } catch (error) {
-    console.error('Ошибка сохранения Chat ID:', error);
-    res.status(500).json({ error: 'Ошибка сохранения Chat ID' });
-  }
-});
-
-// Endpoint для получения текущего Chat ID
-app.get('/api/telegram/chat-id', (req, res) => {
-  const chatId = getTelegramChatId();
-  res.json({ chatId: chatId || null });
-});
-
 // Запуск сервера
 app.listen(PORT, () => {
   console.log('✅ Сервер запущен успешно!');
   console.log('GOLDEN TRAFF:', 'http://localhost:' + PORT);
   ensureDataDir();
   
-  const chatId = getTelegramChatId();
-  if (chatId) {
-    console.log('✅ Telegram Chat ID установлен:', chatId);
+  if (TELEGRAM_CHAT_ID) {
+    console.log('✅ Telegram Chat ID установлен:', TELEGRAM_CHAT_ID);
   } else {
-    console.log('⚠️ Telegram Chat ID не установлен. Установите через переменную окружения TELEGRAM_CHAT_ID или через API /api/telegram/chat-id');
+    console.log('⚠️ Telegram Chat ID не установлен в коде');
   }
 });
