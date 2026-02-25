@@ -13,11 +13,15 @@ const DEAL_AMOUNT_TEAM = 2000; // Сумма для командного при�
 const TELEGRAM_BOT_TOKEN = '7840364464:AAEuBsIUKTnWxCnTaX0jn9WUMC5c4rp2nEk';
 // Группа, куда всегда отправляем сообщения
 const TELEGRAM_CHAT_ID = '-5240130674';
+// Бот для уведомлений о первенстве
+const NOTIFICATION_BOT_TOKEN = '8671998094:AAEyg-2G8cHIoTQT3gCjm1X5QiyW31D4WQ';
 
 // Путь к файлу с данными
 const dataDir = path.join(__dirname, 'data');
 const dealsFile = path.join(dataDir, 'deals.json');
 const tasksFile = path.join(dataDir, 'tasks.json'); // Файл для заданий
+const goalsFile = path.join(dataDir, 'goals.json'); // Файл для целей
+const usersFile = path.join(dataDir, 'users.json'); // Файл для хранения данных пользователей (для уведомлений)
 
 // Создание папки data если её нет
 function ensureDataDir() {
@@ -76,6 +80,108 @@ function saveTasks(tasks) {
     console.error('Ошибка записи файла tasks.json:', error);
     throw error;
   }
+}
+
+// Загрузка целей из файла
+function loadGoals() {
+  ensureDataDir();
+  if (!fs.existsSync(goalsFile)) {
+    return [];
+  }
+  try {
+    const data = fs.readFileSync(goalsFile, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error('Ошибка чтения файла goals.json:', error);
+    return [];
+  }
+}
+
+// Сохранение целей в файл
+function saveGoals(goals) {
+  ensureDataDir();
+  try {
+    fs.writeFileSync(goalsFile, JSON.stringify(goals, null, 2), 'utf8');
+  } catch (error) {
+    console.error('Ошибка записи файла goals.json:', error);
+    throw error;
+  }
+}
+
+// Загрузка данных пользователей из файла
+function loadUsers() {
+  ensureDataDir();
+  if (!fs.existsSync(usersFile)) {
+    return {};
+  }
+  try {
+    const data = fs.readFileSync(usersFile, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error('Ошибка чтения файла users.json:', error);
+    return {};
+  }
+}
+
+// Сохранение данных пользователей в файл
+function saveUsers(users) {
+  ensureDataDir();
+  try {
+    fs.writeFileSync(usersFile, JSON.stringify(users, null, 2), 'utf8');
+  } catch (error) {
+    console.error('Ошибка записи файла users.json:', error);
+    throw error;
+  }
+}
+
+// Функция отправки уведомления пользователю через бота уведомлений
+async function sendNotificationToUser(userId, text) {
+  if (!userId) return;
+  
+  const url = `https://api.telegram.org/bot${NOTIFICATION_BOT_TOKEN}/sendMessage`;
+  const data = JSON.stringify({
+    chat_id: userId,
+    text: text,
+    parse_mode: 'HTML'
+  });
+
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+    const options = {
+      hostname: urlObj.hostname,
+      port: 443,
+      path: urlObj.pathname + urlObj.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': data.length
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let responseData = '';
+      res.on('data', (chunk) => {
+        responseData += chunk;
+      });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          console.log('✅ Уведомление отправлено пользователю', userId);
+          resolve(true);
+        } else {
+          console.error('❌ Ошибка отправки уведомления:', res.statusCode, responseData);
+          resolve(false);
+        }
+      });
+    });
+
+    req.on('error', (error) => {
+      console.error('❌ Ошибка запроса к Telegram API:', error);
+      resolve(false);
+    });
+
+    req.write(data);
+    req.end();
+  });
 }
 
 // Функция отправки сообщения в Telegram (возвращает message_id)
@@ -351,10 +457,11 @@ function getTeamSumData(userId) {
   }
 }
 
-// Получение турнирной таблицы (по подтвержденным сделкам)
+// Получение турнирной таблицы (по подтвержденным сделкам и заданиям)
 function getLeaderboard() {
   try {
     const deals = loadDeals();
+    const tasks = loadTasks();
     const userStats = {};
     
     // Подсчитываем только успешные сделки
@@ -367,6 +474,7 @@ function getLeaderboard() {
             username: d.createdBy || d.username || 'Неизвестный',
             avatar: d.avatar || null,
             dealsCount: 0,
+            tasksCount: 0,
             totalAmount: 0
           };
         }
@@ -376,18 +484,68 @@ function getLeaderboard() {
       }
     }
     
-    // Преобразуем в массив и сортируем по количеству сделок (затем по сумме)
+    // Подсчитываем подтвержденные задания
+    for (const task of tasks) {
+      if (task.completedBy && Array.isArray(task.completedBy)) {
+        for (const userId of task.completedBy) {
+          const userIdStr = String(userId);
+          if (!userStats[userIdStr]) {
+            // Если пользователя нет в статистике, создаем запись
+            userStats[userIdStr] = {
+              userId: userId,
+              username: 'Пользователь',
+              avatar: null,
+              dealsCount: 0,
+              tasksCount: 0,
+              totalAmount: 0
+            };
+          }
+          userStats[userIdStr].tasksCount++;
+        }
+      }
+    }
+    
+    // Преобразуем в массив и сортируем по количеству сделок, затем заданий, затем по сумме
     const leaderboard = Object.values(userStats).sort((a, b) => {
       if (b.dealsCount !== a.dealsCount) {
         return b.dealsCount - a.dealsCount;
       }
+      if (b.tasksCount !== a.tasksCount) {
+        return b.tasksCount - a.tasksCount;
+      }
       return b.totalAmount - a.totalAmount;
     });
+    
+    // Проверяем изменения в первом месте и отправляем уведомления
+    checkLeaderboardChanges(leaderboard);
     
     return leaderboard;
   } catch (error) {
     console.error('Ошибка получения турнирной таблицы:', error);
     return [];
+  }
+}
+
+// Проверка изменений в турнирной таблице и отправка уведомлений
+let previousLeaderboard = [];
+function checkLeaderboardChanges(currentLeaderboard) {
+  try {
+    if (previousLeaderboard.length > 0 && currentLeaderboard.length > 0) {
+      const previousFirst = previousLeaderboard[0];
+      const currentFirst = currentLeaderboard[0];
+      
+      // Если первый место изменилось
+      if (previousFirst && currentFirst && String(previousFirst.userId) !== String(currentFirst.userId)) {
+        // Отправляем уведомление предыдущему лидеру
+        sendNotificationToUser(previousFirst.userId, 
+          `⚠️ Вы потеряли первое место в турнирной таблице! Теперь лидер: ${currentFirst.username}`
+        );
+      }
+    }
+    
+    previousLeaderboard = JSON.parse(JSON.stringify(currentLeaderboard));
+  } catch (error) {
+    console.error('Ошибка проверки изменений в турнирной таблице:', error);
   }
 }
 
@@ -632,6 +790,110 @@ app.get('/api/leaderboard', (req, res) => {
   }
 });
 
+// Сохранение данных пользователя (для уведомлений)
+app.post('/api/users', (req, res) => {
+  try {
+    const { userId, username, avatar } = req.body;
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    
+    const users = loadUsers();
+    users[String(userId)] = {
+      userId: String(userId),
+      username: username || 'Пользователь',
+      avatar: avatar || null,
+      updatedAt: new Date().toISOString()
+    };
+    saveUsers(users);
+    
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Ошибка сохранения пользователя:', error);
+    res.status(500).json({ error: 'Ошибка сохранения пользователя' });
+  }
+});
+
+// Получение текущей цели
+app.get('/api/goal', (req, res) => {
+  try {
+    const goals = loadGoals();
+    // Получаем текущую цель (последнюю созданную)
+    const currentGoal = goals.length > 0 ? goals[goals.length - 1] : null;
+    res.json(currentGoal);
+  } catch (error) {
+    console.error('Ошибка получения цели:', error);
+    res.json(null);
+  }
+});
+
+// Создание еженедельной цели (только админ, только в понедельник)
+app.post('/api/goal', async (req, res) => {
+  try {
+    const { text, isAdmin } = req.body;
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Only admin can create goals' });
+    }
+    
+    if (!text) {
+      return res.status(400).json({ error: 'Goal text is required' });
+    }
+    
+    // Проверяем, что сегодня понедельник
+    const today = new Date();
+    const dayOfWeek = today.getDay(); // 0 = воскресенье, 1 = понедельник
+    if (dayOfWeek !== 1) {
+      return res.status(400).json({ error: 'Goals can only be created on Monday' });
+    }
+    
+    const goals = loadGoals();
+    
+    // Проверяем, не создана ли уже цель на эту неделю
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+    weekStart.setHours(0, 0, 0, 0);
+    
+    const existingGoal = goals.find(g => {
+      const goalDate = new Date(g.createdAt);
+      return goalDate >= weekStart;
+    });
+    
+    if (existingGoal) {
+      return res.status(400).json({ error: 'Goal for this week already exists' });
+    }
+    
+    const newGoal = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+      text: text,
+      createdAt: new Date().toISOString(),
+      weekStart: weekStart.toISOString()
+    };
+    
+    goals.push(newGoal);
+    saveGoals(goals);
+    
+    // Отправляем уведомление всем пользователям о новой цели
+    try {
+      const users = loadUsers();
+      const message = `🎯 Новая еженедельная цель!\n\n${text}`;
+      
+      for (const userId in users) {
+        if (userId && userId !== 'undefined') {
+          await sendNotificationToUser(userId, message);
+        }
+      }
+    } catch (error) {
+      console.error('Ошибка отправки уведомлений о цели:', error);
+    }
+    
+    res.json({ ok: true, goal: newGoal });
+  } catch (error) {
+    console.error('Ошибка создания цели:', error);
+    res.status(500).json({ error: 'Ошибка создания цели' });
+  }
+});
+
 // Получение заданий
 app.get('/api/tasks', (req, res) => {
   try {
@@ -667,11 +929,27 @@ app.post('/api/tasks', async (req, res) => {
       description,
       reward: Number(reward) || 0,
       createdAt: new Date().toISOString(),
-      completedBy: [] // Массив userId пользователей, выполнивших задание
+      completedBy: [], // Массив userId пользователей, подтвержденных админом
+      pendingCompletions: [] // Массив пользователей, ожидающих подтверждения
     };
     
     tasks.push(newTask);
     saveTasks(tasks);
+    
+    // Отправляем уведомление всем пользователям о новом задании
+    try {
+      const users = loadUsers();
+      const message = `📋 Новое задание!\n\n${title}\n${description}\n\nНаграда: ${reward}₽`;
+      
+      // Отправляем всем пользователям, у которых есть userId
+      for (const userId in users) {
+        if (userId && userId !== 'undefined') {
+          await sendNotificationToUser(userId, message);
+        }
+      }
+    } catch (error) {
+      console.error('Ошибка отправки уведомлений о задании:', error);
+    }
     
     res.json({ ok: true, task: newTask });
   } catch (error) {
@@ -680,11 +958,11 @@ app.post('/api/tasks', async (req, res) => {
   }
 });
 
-// Обновление задания (отметка о выполнении)
+// Обновление задания (отметка о выполнении пользователем - добавляет в pending)
 app.patch('/api/tasks/:id', async (req, res) => {
   try {
     const taskId = req.params.id;
-    const { userId, action } = req.body; // action: 'complete' или 'uncomplete'
+    const { userId, action, username, avatar } = req.body; // action: 'complete' или 'uncomplete'
     
     if (!userId) {
       return res.status(400).json({ error: 'userId is required' });
@@ -700,15 +978,27 @@ app.patch('/api/tasks/:id', async (req, res) => {
     const task = tasks[taskIndex];
     
     if (action === 'complete') {
-      // Добавляем userId в список выполнивших, если его там нет
-      if (!task.completedBy) {
-        task.completedBy = [];
+      // Инициализируем pendingCompletions если его нет
+      if (!task.pendingCompletions) {
+        task.pendingCompletions = [];
       }
-      if (!task.completedBy.includes(String(userId))) {
-        task.completedBy.push(String(userId));
+      
+      // Проверяем, не добавлен ли уже пользователь
+      const existing = task.pendingCompletions.find(p => String(p.userId) === String(userId));
+      if (!existing) {
+        task.pendingCompletions.push({
+          userId: String(userId),
+          username: username || 'Пользователь',
+          avatar: avatar || null,
+          completedAt: new Date().toISOString() // Время выполнения
+        });
       }
     } else if (action === 'uncomplete') {
-      // Удаляем userId из списка
+      // Удаляем из pending
+      if (task.pendingCompletions) {
+        task.pendingCompletions = task.pendingCompletions.filter(p => String(p.userId) !== String(userId));
+      }
+      // Также удаляем из подтвержденных, если был
       if (task.completedBy) {
         task.completedBy = task.completedBy.filter(id => String(id) !== String(userId));
       }
@@ -720,6 +1010,98 @@ app.patch('/api/tasks/:id', async (req, res) => {
   } catch (error) {
     console.error('Ошибка обновления задания:', error);
     res.status(500).json({ error: 'Ошибка обновления задания' });
+  }
+});
+
+// Подтверждение выполнения задания админом
+app.post('/api/tasks/:id/confirm', async (req, res) => {
+  try {
+    const taskId = req.params.id;
+    const { userId, isAdmin } = req.body; // userId пользователя, которого подтверждаем
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Only admin can confirm tasks' });
+    }
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    
+    const tasks = loadTasks();
+    const taskIndex = tasks.findIndex(t => t.id === taskId);
+    
+    if (taskIndex === -1) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    
+    const task = tasks[taskIndex];
+    
+    // Удаляем из pending
+    if (task.pendingCompletions) {
+      const pendingIndex = task.pendingCompletions.findIndex(p => String(p.userId) === String(userId));
+      if (pendingIndex !== -1) {
+        task.pendingCompletions.splice(pendingIndex, 1);
+      }
+    }
+    
+    // Добавляем в подтвержденные
+    if (!task.completedBy) {
+      task.completedBy = [];
+    }
+    if (!task.completedBy.includes(String(userId))) {
+      task.completedBy.push(String(userId));
+    }
+    
+    saveTasks(tasks);
+    
+    // Отправляем уведомление пользователю
+    try {
+      await sendNotificationToUser(userId, `✅ Ваше выполнение задания "${task.title}" подтверждено! Награда: ${task.reward}₽`);
+    } catch (error) {
+      console.error('Ошибка отправки уведомления:', error);
+    }
+    
+    res.json({ ok: true, task: tasks[taskIndex] });
+  } catch (error) {
+    console.error('Ошибка подтверждения задания:', error);
+    res.status(500).json({ error: 'Ошибка подтверждения задания' });
+  }
+});
+
+// Отклонение выполнения задания админом
+app.post('/api/tasks/:id/reject', async (req, res) => {
+  try {
+    const taskId = req.params.id;
+    const { userId, isAdmin } = req.body;
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Only admin can reject tasks' });
+    }
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    
+    const tasks = loadTasks();
+    const taskIndex = tasks.findIndex(t => t.id === taskId);
+    
+    if (taskIndex === -1) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    
+    const task = tasks[taskIndex];
+    
+    // Удаляем из pending
+    if (task.pendingCompletions) {
+      task.pendingCompletions = task.pendingCompletions.filter(p => String(p.userId) !== String(userId));
+    }
+    
+    saveTasks(tasks);
+    
+    res.json({ ok: true, task: tasks[taskIndex] });
+  } catch (error) {
+    console.error('Ошибка отклонения задания:', error);
+    res.status(500).json({ error: 'Ошибка отклонения задания' });
   }
 });
 
