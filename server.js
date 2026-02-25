@@ -221,10 +221,29 @@ app.get('/api/deals', (req, res) => {
 app.post('/api/deals', async (req, res) => {
   try {
     const username = String(req.body.username || '').trim().replace(/^@/, '') || 'user';
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
     const usernameFormatted = username.startsWith('@') ? username : '@' + username;
     
     const deals = loadDeals();
+    const now = new Date().getTime();
+    const duplicateWindow = 5000; // 5 секунд
+    
+    // Проверяем, не создана ли сделка с тем же username в последние 5 секунд
+    const recentDeal = deals.find(deal => {
+      if (deal.username.toLowerCase() !== usernameFormatted.toLowerCase()) {
+        return false;
+      }
+      const dealTime = new Date(deal.date).getTime();
+      return (now - dealTime) < duplicateWindow;
+    });
+    
+    if (recentDeal) {
+      return res.status(400).json({ 
+        error: 'Сделка с этим пользователем уже создана недавно. Подождите несколько секунд.',
+        duplicate: true
+      });
+    }
+    
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
     const newDeal = {
       id,
       username: usernameFormatted,
