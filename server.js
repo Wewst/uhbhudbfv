@@ -20,18 +20,72 @@ const PORT = process.env.PORT || 3000;
 const DEAL_AMOUNT = 9500;
 
 // Подключение к PostgreSQL
+// Принудительно используем IPv4 адрес вместо доменного имени
 const dbUrl = process.env.DATABASE_URL;
 
-const pool = new Pool({
-  connectionString: dbUrl,
-  ssl: dbUrl ? { 
-    rejectUnauthorized: false,
-    require: true 
-  } : false,
-  // Дополнительные настройки для Supabase
-  connectionTimeoutMillis: 10000,
-  idleTimeoutMillis: 30000
-});
+// Функция для парсинга connection string и получения IPv4 адреса
+async function getConnectionConfig(url) {
+  if (!url) return null;
+  
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname;
+    
+    // Если это уже IPv4 адрес, используем параметры подключения напрямую
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
+      return {
+        host: hostname,
+        port: parseInt(urlObj.port) || 5432,
+        database: urlObj.pathname.slice(1) || 'postgres',
+        user: urlObj.username || 'postgres',
+        password: urlObj.password,
+        ssl: { rejectUnauthorized: false, require: true }
+      };
+    }
+    
+    // Резолвим доменное имя в IPv4 адрес
+    return new Promise((resolve, reject) => {
+      dns.lookup(hostname, { family: 4, all: false }, (err, address) => {
+        if (err) {
+          console.error('❌ Ошибка DNS lookup:', err.message);
+          console.error('⚠️ Пытаемся использовать доменное имя напрямую...');
+          // Если не удалось резолвить, используем параметры подключения с доменным именем
+          resolve({
+            host: hostname,
+            port: parseInt(urlObj.port) || 5432,
+            database: urlObj.pathname.slice(1) || 'postgres',
+            user: urlObj.username || 'postgres',
+            password: urlObj.password,
+            ssl: { rejectUnauthorized: false, require: true }
+          });
+          return;
+        }
+        
+        console.log(`✅ DNS резолв: ${hostname} -> ${address} (IPv4)`);
+        
+        // Используем параметры подключения с IPv4 адресом
+        resolve({
+          host: address,
+          port: parseInt(urlObj.port) || 5432,
+          database: urlObj.pathname.slice(1) || 'postgres',
+          user: urlObj.username || 'postgres',
+          password: urlObj.password,
+          ssl: { rejectUnauthorized: false, require: true }
+        });
+      });
+    });
+  } catch (e) {
+    console.error('❌ Ошибка парсинга URL:', e.message);
+    // В случае ошибки пытаемся использовать connectionString
+    return {
+      connectionString: url,
+      ssl: { rejectUnauthorized: false, require: true }
+    };
+  }
+}
+
+// Создаем pool с конфигурацией (будет установлена в initDatabase)
+let pool = null;
 
 // Инициализация базы данных (создание таблицы если её нет)
 async function initDatabase() {
@@ -54,15 +108,19 @@ async function initDatabase() {
     if (dbUrl.includes('2a05:') || dbUrl.match(/\[.*:.*\]/) || dbUrl.match(/[0-9a-f]{4}:[0-9a-f]{4}:/i)) {
       console.error('❌ ОШИБКА: Обнаружен IPv6 адрес в строке подключения!');
       console.error('❌ Нужно использовать доменное имя db.xxxxx.supabase.co вместо IP адреса!');
-      console.error('❌ Правильная строка должна быть:');
-      console.error('   postgresql://postgres:G2HTgIhxJ956SiCH@db.jloikvxxxnpptvzdaidv.supabase.co:5432/postgres');
-      throw new Error('Используется IPv6 адрес вместо доменного имени. Обновите DATABASE_URL в Render на строку с доменным именем db.jloikvxxxnpptvzdaidv.supabase.co');
+      throw new Error('Используется IPv6 адрес вместо доменного имени. Обновите DATABASE_URL в Render.');
     }
     
-    // Проверка, что используется доменное имя Supabase
-    if (!dbUrl.includes('supabase.co')) {
-      console.error('⚠️ ВНИМАНИЕ: В строке подключения нет доменного имени supabase.co!');
-    }
+    // Получаем конфигурацию подключения с IPv4 адресом
+    console.log('Резолв доменного имени в IPv4 адрес...');
+    const connectionConfig = await getConnectionConfig(dbUrl);
+    
+    // Создаем pool с правильной конфигурацией
+    pool = new Pool({
+      ...connectionConfig,
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 30000
+    });
     
     // Проверка подключения к базе данных
     console.log('Проверка подключения к базе данных...');
