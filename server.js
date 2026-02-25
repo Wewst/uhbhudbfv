@@ -423,6 +423,236 @@ app.get('/api/ping', (req, res) => {
   });
 });
 
+// Функция получения сообщений бота из группы
+async function getBotMessages(limit = 100) {
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?limit=${limit}`;
+  
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+    const options = {
+      hostname: urlObj.hostname,
+      port: 443,
+      path: urlObj.pathname + urlObj.search,
+      method: 'GET'
+    };
+
+    const req = https.request(options, (res) => {
+      let responseData = '';
+      res.on('data', (chunk) => {
+        responseData += chunk;
+      });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try {
+            const response = JSON.parse(responseData);
+            resolve(response.result || []);
+          } catch (e) {
+            reject(new Error('Ошибка парсинга ответа'));
+          }
+        } else {
+          reject(new Error(`HTTP ${res.statusCode}: ${responseData}`));
+        }
+      });
+    });
+
+    req.on('error', (error) => {
+      reject(error);
+    });
+
+    req.end();
+  });
+}
+
+// Функция получения ID бота
+async function getBotInfo() {
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe`;
+  
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+    const options = {
+      hostname: urlObj.hostname,
+      port: 443,
+      path: urlObj.pathname,
+      method: 'GET'
+    };
+
+    const req = https.request(options, (res) => {
+      let responseData = '';
+      res.on('data', (chunk) => {
+        responseData += chunk;
+      });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try {
+            const response = JSON.parse(responseData);
+            resolve(response.result);
+          } catch (e) {
+            reject(new Error('Ошибка парсинга ответа'));
+          }
+        } else {
+          reject(new Error(`HTTP ${res.statusCode}: ${responseData}`));
+        }
+      });
+    });
+
+    req.on('error', (error) => {
+      reject(error);
+    });
+
+    req.end();
+  });
+}
+
+// Функция парсинга сообщения бота и извлечения данных о сделке
+function parseDealFromMessage(messageText) {
+  if (!messageText) return null;
+  
+  // Паттерны для распознавания сообщений
+  const createPattern = /Сделка создалась\s+(@?\w+)/i;
+  const successPattern = /Сделка успешна\s+(@?\w+)/i;
+  const failedPattern = /Сделка провалена\s+(@?\w+)/i;
+  
+  let username = null;
+  let status = 'pending';
+  
+  if (createPattern.test(messageText)) {
+    const match = messageText.match(createPattern);
+    username = match[1];
+    status = 'pending';
+  } else if (successPattern.test(messageText)) {
+    const match = messageText.match(successPattern);
+    username = match[1];
+    status = 'success';
+  } else if (failedPattern.test(messageText)) {
+    const match = messageText.match(failedPattern);
+    username = match[1];
+    status = 'failed';
+  } else {
+    return null;
+  }
+  
+  // Нормализуем username
+  if (username && !username.startsWith('@')) {
+    username = '@' + username;
+  }
+  
+  return { username, status };
+}
+
+// Функция восстановления сделок из сообщений бота
+async function restoreDealsFromBotMessages() {
+  try {
+    console.log('🔄 Начинаю синхронизацию сделок из сообщений бота...');
+    
+    // Получаем ID бота
+    const botInfo = await getBotInfo();
+    const botId = botInfo.id;
+    console.log('✅ ID бота:', botId);
+    
+    // Получаем сообщения
+    const updates = await getBotMessages(100);
+    console.log(`📨 Получено обновлений: ${updates.length}`);
+    
+    const deals = loadDeals();
+    let restoredCount = 0;
+    let updatedCount = 0;
+    
+    // Обрабатываем обновления в обратном порядке (от старых к новым)
+    const messages = [];
+    for (const update of updates) {
+      if (update.message && 
+          update.message.chat && 
+          String(update.message.chat.id) === String(TELEGRAM_CHAT_ID) &&
+          update.message.from && 
+          update.message.from.id === botId) {
+        messages.push({
+          messageId: update.message.message_id,
+          text: update.message.text,
+          date: update.message.date
+        });
+      }
+    }
+    
+    // Сортируем по дате (от старых к новым)
+    messages.sort((a, b) => a.date - b.date);
+    
+    // Обрабатываем каждое сообщение
+    for (const msg of messages) {
+      const dealData = parseDealFromMessage(msg.text);
+      if (!dealData) continue;
+      
+      // Ищем существующую сделку по username
+      let existingDeal = deals.find(d => 
+        d.username && d.username.toLowerCase() === dealData.username.toLowerCase()
+      );
+      
+      if (!existingDeal) {
+        // Создаем новую сделку
+        const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
+        const newDeal = {
+          id,
+          username: dealData.username,
+          amount: DEAL_AMOUNT,
+          date: new Date(msg.date * 1000).toISOString(), // Telegram date в секундах
+          status: dealData.status,
+          telegramMessageId: msg.messageId,
+          restored: true // Флаг, что сделка восстановлена
+        };
+        deals.push(newDeal);
+        restoredCount++;
+        console.log(`✅ Восстановлена сделка: ${dealData.username} (${dealData.status})`);
+      } else {
+        // Обновляем статус существующей сделки, если нужно
+        if (dealData.status !== 'pending' && existingDeal.status === 'pending') {
+          existingDeal.status = dealData.status;
+          existingDeal.telegramMessageId = msg.messageId;
+          updatedCount++;
+          console.log(`🔄 Обновлен статус сделки: ${dealData.username} -> ${dealData.status}`);
+        }
+      }
+    }
+    
+    // Сохраняем все сделки
+    if (restoredCount > 0 || updatedCount > 0) {
+      saveDeals(deals);
+      console.log(`✅ Синхронизация завершена: восстановлено ${restoredCount}, обновлено ${updatedCount}`);
+    } else {
+      console.log('✅ Синхронизация завершена: изменений нет');
+    }
+    
+    return { restored: restoredCount, updated: updatedCount, total: deals.length };
+  } catch (error) {
+    console.error('❌ Ошибка синхронизации:', error);
+    throw error;
+  }
+}
+
+// Endpoint для ручной синхронизации
+app.post('/api/telegram/sync', async (req, res) => {
+  try {
+    const result = await restoreDealsFromBotMessages();
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    console.error('Ошибка синхронизации:', error);
+    res.status(500).json({ error: 'Ошибка синхронизации', message: error.message });
+  }
+});
+
+// Endpoint для получения статистики синхронизации
+app.get('/api/telegram/sync', async (req, res) => {
+  try {
+    const deals = loadDeals();
+    const restored = deals.filter(d => d.restored).length;
+    res.json({ 
+      total: deals.length, 
+      restored: restored,
+      normal: deals.length - restored
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка получения статистики' });
+  }
+});
+
 // Запуск сервера
 app.listen(PORT, () => {
   console.log('✅ Сервер запущен успешно!');
@@ -431,6 +661,15 @@ app.listen(PORT, () => {
   
   if (TELEGRAM_CHAT_ID) {
     console.log('✅ Telegram Chat ID установлен:', TELEGRAM_CHAT_ID);
+    
+    // Автоматическая синхронизация при старте (в фоне, не блокирует запуск)
+    setTimeout(async () => {
+      try {
+        await restoreDealsFromBotMessages();
+      } catch (error) {
+        console.error('⚠️ Ошибка автоматической синхронизации при старте:', error.message);
+      }
+    }, 3000); // Ждем 3 секунды после запуска
   } else {
     console.log('⚠️ Telegram Chat ID не установлен в коде');
   }
