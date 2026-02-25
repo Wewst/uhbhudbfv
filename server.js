@@ -475,25 +475,22 @@ app.get('/api/ping', (req, res) => {
 });
 
 // Функция получения всех сообщений бота из группы
-// ВАЖНО: getUpdates возвращает только необработанные обновления
-// Для получения истории нужно использовать offset=0 и обработать все обновления
+// Используем offset=0 для получения ВСЕХ обновлений с начала
 async function getAllBotMessages() {
   // Получаем ID бота
   const botInfo = await getBotInfo();
   const botId = botInfo.id;
   
-  console.log('📥 Начинаю получение всех сообщений бота из группы...');
-  console.log('⚠️ ВАЖНО: getUpdates возвращает только необработанные обновления.');
-  console.log('⚠️ Если бот уже обработал обновления, они не вернутся.');
-  console.log('⚠️ Для полной истории нужно использовать offset=0 при первом запуске.');
+  console.log('📥 Начинаю получение ВСЕХ сообщений бота из группы...');
+  console.log('📌 Использую offset=0 для получения всей истории');
   
   let allUpdates = [];
-  let offset = 0;
+  let offset = 0; // Начинаем с самого начала
   let hasMore = true;
   let attempts = 0;
-  const maxAttempts = 50; // Максимум 50 попыток (5000 сообщений)
+  const maxAttempts = 100; // Увеличиваем лимит для получения большего количества сообщений
   
-  // Получаем обновления порциями
+  // Получаем обновления порциями, начиная с offset=0
   while (hasMore && attempts < maxAttempts) {
     attempts++;
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=${offset}&limit=100`;
@@ -505,7 +502,7 @@ async function getAllBotMessages() {
         port: 443,
         path: urlObj.pathname + urlObj.search,
         method: 'GET',
-        timeout: 5000
+        timeout: 10000
       };
 
       const req = https.request(options, (res) => {
@@ -533,7 +530,7 @@ async function getAllBotMessages() {
       
       req.on('timeout', () => {
         req.destroy();
-        resolve([]); // Возвращаем пустой массив при таймауте
+        resolve([]);
       });
 
       req.end();
@@ -566,16 +563,18 @@ async function getAllBotMessages() {
       if (updates.length < 100) {
         hasMore = false;
       }
+      
+      // Небольшая задержка между запросами
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
   }
   
   console.log(`✅ Всего получено ${allUpdates.length} сообщений бота из группы`);
   
   if (allUpdates.length === 0) {
-    console.log('⚠️ Сообщений не найдено. Возможные причины:');
-    console.log('   1. Бот уже обработал все обновления (getUpdates возвращает только необработанные)');
-    console.log('   2. Бот не отправлял сообщения в эту группу');
-    console.log('   3. Бот не добавлен в группу или не имеет прав');
+    console.log('⚠️ Сообщений не найдено через getUpdates.');
+    console.log('💡 Это может означать, что все обновления уже были обработаны ранее.');
+    console.log('💡 Бот будет использовать сохраненные сообщения из файла bot_messages.json');
   }
   
   return allUpdates;
@@ -657,39 +656,106 @@ function parseDealFromMessage(messageText) {
   return { username, status };
 }
 
+// Функция получения истории сообщений из группы через forwardMessage (если бот админ)
+// Альтернативный метод - получаем сообщения через поиск по тексту
+async function getChatHistoryMessages() {
+  console.log('📥 Пытаюсь получить историю сообщений из группы...');
+  
+  // К сожалению, Telegram Bot API не позволяет напрямую получить историю сообщений
+  // Но можно попробовать получить через getUpdates с offset=0
+  // Это вернет все необработанные обновления с начала
+  
+  try {
+    // Получаем все обновления с самого начала (offset=0)
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=0&limit=100`;
+    
+    const updates = await new Promise((resolve, reject) => {
+      const urlObj = new URL(url);
+      const options = {
+        hostname: urlObj.hostname,
+        port: 443,
+        path: urlObj.pathname + urlObj.search,
+        method: 'GET'
+      };
+
+      const req = https.request(options, (res) => {
+        let responseData = '';
+        res.on('data', (chunk) => {
+          responseData += chunk;
+        });
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            try {
+              const response = JSON.parse(responseData);
+              resolve(response.result || []);
+            } catch (e) {
+              reject(new Error('Ошибка парсинга ответа'));
+            }
+          } else {
+            reject(new Error(`HTTP ${res.statusCode}: ${responseData}`));
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        reject(error);
+      });
+
+      req.end();
+    });
+    
+    return updates;
+  } catch (error) {
+    console.error('Ошибка получения истории:', error);
+    return [];
+  }
+}
+
 // Функция восстановления сделок из сообщений бота
 async function restoreDealsFromBotMessages() {
   try {
     console.log('🔄 Начинаю синхронизацию сделок из сообщений бота...');
     console.log('✅ Группа для синхронизации:', TELEGRAM_CHAT_ID);
     
+    // Получаем ID бота
+    const botInfo = await getBotInfo();
+    const botId = botInfo.id;
+    console.log('✅ ID бота:', botId);
+    
     // Сначала загружаем сохраненные сообщения из файла
     const savedMessages = loadBotMessages();
     console.log(`📁 Загружено ${savedMessages.length} сохраненных сообщений из файла`);
     
-    // Также пытаемся получить новые сообщения через getUpdates
-    let updates = [];
+    // Пытаемся получить все обновления с начала (для старых сообщений)
+    let allUpdates = [];
     try {
-      updates = await getAllBotMessages();
-      console.log(`📨 Получено ${updates.length} новых сообщений через getUpdates`);
+      console.log('📥 Пытаюсь получить старые сообщения через getUpdates...');
+      allUpdates = await getAllBotMessages();
+      console.log(`📨 Получено ${allUpdates.length} сообщений через getUpdates`);
     } catch (error) {
       console.log('⚠️ Не удалось получить сообщения через getUpdates:', error.message);
     }
     
-    // Объединяем сохраненные и новые сообщения
+    // Объединяем сохраненные и полученные сообщения
     const allMessages = [...savedMessages];
     
-    // Добавляем новые сообщения из getUpdates (если их еще нет в сохраненных)
-    for (const update of updates) {
+    // Добавляем сообщения из getUpdates (если их еще нет в сохраненных)
+    for (const update of allUpdates) {
       if (update.message && update.message.text) {
         const messageId = update.message.message_id;
-        if (!allMessages.find(m => m.messageId === messageId)) {
-          allMessages.push({
+        const existingMsg = allMessages.find(m => m.messageId === messageId);
+        
+        if (!existingMsg) {
+          const newMsg = {
             messageId,
             text: update.message.text,
             date: new Date(update.message.date * 1000).toISOString(),
             chatId: String(update.message.chat.id)
-          });
+          };
+          allMessages.push(newMsg);
+          
+          // Сохраняем новое сообщение в файл
+          saveBotMessage(messageId, update.message.text, newMsg.date);
         }
       }
     }
@@ -701,6 +767,12 @@ async function restoreDealsFromBotMessages() {
     
     console.log(`📝 Всего сообщений бота из группы: ${groupMessages.length}`);
     
+    if (groupMessages.length === 0) {
+      console.log('⚠️ Сообщений бота в группе не найдено.');
+      console.log('💡 Совет: Убедитесь, что бот отправлял сообщения в эту группу.');
+      return { restored: 0, updated: 0, total: loadDeals().length };
+    }
+    
     const deals = loadDeals();
     let restoredCount = 0;
     let updatedCount = 0;
@@ -709,16 +781,28 @@ async function restoreDealsFromBotMessages() {
     groupMessages.sort((a, b) => new Date(a.date) - new Date(b.date));
     console.log(`📝 Обрабатываю ${groupMessages.length} сообщений...`);
     
-    // Обрабатываем каждое сообщение
+    // Обрабатываем каждое сообщение в хронологическом порядке
+    // Сначала обрабатываем сообщения о создании, потом о статусе
+    const createMessages = [];
+    const statusMessages = [];
+    
     for (const msg of groupMessages) {
       const dealData = parseDealFromMessage(msg.text);
       if (!dealData) continue;
       
-      // Ищем существующую сделку по username и message_id (чтобы не дублировать)
+      if (dealData.status === 'pending') {
+        createMessages.push({ msg, dealData });
+      } else {
+        statusMessages.push({ msg, dealData });
+      }
+    }
+    
+    // Сначала обрабатываем все сообщения о создании
+    for (const { msg, dealData } of createMessages) {
+      // Ищем существующую сделку по username (без учета статуса для создания)
       let existingDeal = deals.find(d => 
         d.telegramMessageId === msg.messageId || 
-        (d.username && d.username.toLowerCase() === dealData.username.toLowerCase() && 
-         d.status === dealData.status)
+        (d.username && d.username.toLowerCase() === dealData.username.toLowerCase())
       );
       
       if (!existingDeal) {
@@ -729,21 +813,52 @@ async function restoreDealsFromBotMessages() {
           username: dealData.username,
           amount: DEAL_AMOUNT,
           date: msg.date || new Date().toISOString(),
-          status: dealData.status,
+          status: 'pending', // Всегда pending при создании
           telegramMessageId: msg.messageId,
-          restored: true // Флаг, что сделка восстановлена
+          restored: true
         };
         deals.push(newDeal);
         restoredCount++;
-        console.log(`✅ Восстановлена сделка: ${dealData.username} (${dealData.status})`);
-      } else {
-        // Обновляем статус существующей сделки, если нужно
-        if (dealData.status !== 'pending' && existingDeal.status === 'pending') {
+        console.log(`✅ Восстановлена сделка: ${dealData.username} (создана)`);
+      } else if (!existingDeal.telegramMessageId) {
+        // Если у существующей сделки нет message_id, обновляем
+        existingDeal.telegramMessageId = msg.messageId;
+      }
+    }
+    
+    // Потом обрабатываем сообщения о статусе (успех/провал)
+    for (const { msg, dealData } of statusMessages) {
+      // Ищем сделку по username
+      let existingDeal = deals.find(d => 
+        d.username && d.username.toLowerCase() === dealData.username.toLowerCase()
+      );
+      
+      if (existingDeal) {
+        // Обновляем статус, если сделка еще pending или если это более новое сообщение
+        const msgDate = new Date(msg.date);
+        const dealDate = new Date(existingDeal.date);
+        
+        if (msgDate > dealDate && (existingDeal.status === 'pending' || !existingDeal.telegramMessageId)) {
           existingDeal.status = dealData.status;
           existingDeal.telegramMessageId = msg.messageId;
           updatedCount++;
           console.log(`🔄 Обновлен статус сделки: ${dealData.username} -> ${dealData.status}`);
         }
+      } else {
+        // Если сделка о создании не найдена, но есть сообщение о статусе - создаем с этим статусом
+        const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
+        const newDeal = {
+          id,
+          username: dealData.username,
+          amount: DEAL_AMOUNT,
+          date: msg.date || new Date().toISOString(),
+          status: dealData.status,
+          telegramMessageId: msg.messageId,
+          restored: true
+        };
+        deals.push(newDeal);
+        restoredCount++;
+        console.log(`✅ Восстановлена сделка: ${dealData.username} (${dealData.status})`);
       }
     }
     
