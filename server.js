@@ -6,7 +6,8 @@ const https = require('https');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DEAL_AMOUNT = 9500;
+const DEAL_AMOUNT_ADMIN = 9500; // Сумма для админского приложения
+const DEAL_AMOUNT_TEAM = 2000; // Сумма для командного приложения
 
 // Telegram Bot настройки (жёстко прописанные данные)
 const TELEGRAM_BOT_TOKEN = '7840364464:AAEuBsIUKTnWxCnTaX0jn9WUMC5c4rp2nEk';
@@ -16,6 +17,7 @@ const TELEGRAM_CHAT_ID = '-5240130674';
 // Путь к файлу с данными
 const dataDir = path.join(__dirname, 'data');
 const dealsFile = path.join(dataDir, 'deals.json');
+const tasksFile = path.join(dataDir, 'tasks.json'); // Файл для заданий
 
 // Создание папки data если её нет
 function ensureDataDir() {
@@ -46,6 +48,32 @@ function saveDeals(deals) {
     fs.writeFileSync(dealsFile, JSON.stringify(deals, null, 2), 'utf8');
   } catch (error) {
     console.error('Ошибка записи файла deals.json:', error);
+    throw error;
+  }
+}
+
+// Загрузка заданий из файла
+function loadTasks() {
+  ensureDataDir();
+  if (!fs.existsSync(tasksFile)) {
+    return [];
+  }
+  try {
+    const data = fs.readFileSync(tasksFile, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error('Ошибка чтения файла tasks.json:', error);
+    return [];
+  }
+}
+
+// Сохранение заданий в файл
+function saveTasks(tasks) {
+  ensureDataDir();
+  try {
+    fs.writeFileSync(tasksFile, JSON.stringify(tasks, null, 2), 'utf8');
+  } catch (error) {
+    console.error('Ошибка записи файла tasks.json:', error);
     throw error;
   }
 }
@@ -201,6 +229,7 @@ function calculateDeductions(amount) {
   };
 }
 
+// Получение данных суммы для админского приложения (с вычетами)
 function getSumData() {
   try {
     const deals = loadDeals();
@@ -215,7 +244,7 @@ function getSumData() {
     let totalEmployees = 0, monthEmployees = 0, dayEmployees = 0;
 
   for (const d of deals) {
-    const amt = d.amount || DEAL_AMOUNT;
+    const amt = d.amount || DEAL_AMOUNT_ADMIN;
     const t = new Date(d.date).getTime();
       const deductions = calculateDeductions(amt);
       
@@ -267,6 +296,98 @@ function getSumData() {
   }
 }
 
+// Получение данных суммы для командного приложения (без вычетов, с персональной суммой)
+function getTeamSumData(userId) {
+  try {
+    const deals = loadDeals();
+    const now = new Date();
+    const todayStart = startOfDay(now);
+    const monthStart = startOfMonth(now);
+
+    let totalAll = 0; // Общая сумма всех сделок (admin + team, но admin показывается как 2000)
+    let totalPersonal = 0; // Персональная сумма пользователя
+    let monthAll = 0, dayAll = 0;
+    let monthPersonal = 0, dayPersonal = 0;
+
+    for (const d of deals) {
+      const t = new Date(d.date).getTime();
+      let dealAmount = d.amount || (d.appType === 'admin' ? DEAL_AMOUNT_ADMIN : DEAL_AMOUNT_TEAM);
+      
+      // В командном приложении админские сделки показываются как 2000
+      if (d.appType === 'admin') {
+        dealAmount = DEAL_AMOUNT_TEAM;
+      }
+      
+      // Общая сумма (все сделки)
+      totalAll += dealAmount;
+      if (t >= monthStart) monthAll += dealAmount;
+      if (t >= todayStart) dayAll += dealAmount;
+      
+      // Персональная сумма (только сделки пользователя)
+      if (userId && d.userId && String(d.userId) === String(userId)) {
+        totalPersonal += dealAmount;
+        if (t >= monthStart) monthPersonal += dealAmount;
+        if (t >= todayStart) dayPersonal += dealAmount;
+      }
+    }
+
+    return {
+      totalAll,
+      monthAll,
+      dayAll,
+      totalPersonal,
+      monthPersonal,
+      dayPersonal
+    };
+  } catch (error) {
+    console.error('Ошибка получения данных команды:', error);
+    return {
+      totalAll: 0, monthAll: 0, dayAll: 0,
+      totalPersonal: 0, monthPersonal: 0, dayPersonal: 0
+    };
+  }
+}
+
+// Получение турнирной таблицы (по подтвержденным сделкам)
+function getLeaderboard() {
+  try {
+    const deals = loadDeals();
+    const userStats = {};
+    
+    // Подсчитываем только успешные сделки
+    for (const d of deals) {
+      if (d.status === 'success' && d.userId) {
+        const userId = String(d.userId);
+        if (!userStats[userId]) {
+          userStats[userId] = {
+            userId: d.userId,
+            username: d.createdBy || d.username || 'Неизвестный',
+            avatar: d.avatar || null,
+            dealsCount: 0,
+            totalAmount: 0
+          };
+        }
+        userStats[userId].dealsCount++;
+        // Для турнирной таблицы считаем все сделки как 2000
+        userStats[userId].totalAmount += DEAL_AMOUNT_TEAM;
+      }
+    }
+    
+    // Преобразуем в массив и сортируем по количеству сделок (затем по сумме)
+    const leaderboard = Object.values(userStats).sort((a, b) => {
+      if (b.dealsCount !== a.dealsCount) {
+        return b.dealsCount - a.dealsCount;
+      }
+      return b.totalAmount - a.totalAmount;
+    });
+    
+    return leaderboard;
+  } catch (error) {
+    console.error('Ошибка получения турнирной таблицы:', error);
+    return [];
+  }
+}
+
 app.get('/api/sum', (req, res) => {
   res.json(getSumData());
 });
@@ -285,18 +406,29 @@ app.get('/api/deals', (req, res) => {
 
 app.post('/api/deals', async (req, res) => {
   try {
-  const username = String(req.body.username || '').trim().replace(/^@/, '') || 'user';
+    const username = String(req.body.username || '').trim().replace(/^@/, '') || 'user';
+    const appType = req.body.appType || 'admin'; // 'admin' или 'team'
+    const userId = req.body.userId || null; // ID пользователя Telegram
+    const userAvatar = req.body.avatar || null; // Аватар пользователя
+    const createdBy = req.body.createdBy || username; // Имя создателя
+    
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
     const usernameFormatted = username.startsWith('@') ? username : '@' + username;
     
-  const deals = loadDeals();
+    const dealAmount = appType === 'admin' ? DEAL_AMOUNT_ADMIN : DEAL_AMOUNT_TEAM;
+    
+    const deals = loadDeals();
     const newDeal = {
       id,
       username: usernameFormatted,
-    amount: DEAL_AMOUNT,
+      amount: dealAmount,
       date: new Date().toISOString(),
       status: 'pending',
-      telegramMessageId: null
+      telegramMessageId: null,
+      appType: appType,
+      userId: userId,
+      avatar: userAvatar,
+      createdBy: createdBy
     };
     
     deals.push(newDeal);
@@ -330,7 +462,7 @@ app.post('/api/deals', async (req, res) => {
 app.patch('/api/deals/:id', async (req, res) => {
   try {
     const dealId = req.params.id;
-    const { status } = req.body;
+    const { status, userId } = req.body; // userId для проверки прав
     
     if (!status || !['pending', 'success', 'failed'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
@@ -344,6 +476,12 @@ app.patch('/api/deals/:id', async (req, res) => {
     }
 
     const deal = deals[dealIndex];
+    
+    // Проверка прав: только создатель сделки может изменять её (кроме админского приложения)
+    if (deal.appType === 'team' && userId && deal.userId && String(deal.userId) !== String(userId)) {
+      return res.status(403).json({ error: 'You can only modify your own deals' });
+    }
+    
     const oldMessageId = deal.telegramMessageId;
     
     deals[dealIndex].status = status;
@@ -387,6 +525,8 @@ app.patch('/api/deals/:id', async (req, res) => {
 app.delete('/api/deals/:id', async (req, res) => {
   try {
     const dealId = req.params.id;
+    const { userId } = req.body; // userId для проверки прав
+    
     const deals = loadDeals();
     const dealIndex = deals.findIndex(d => d.id === dealId);
 
@@ -395,6 +535,12 @@ app.delete('/api/deals/:id', async (req, res) => {
     }
 
     const deal = deals[dealIndex];
+    
+    // Проверка прав: только создатель сделки может удалять её (кроме админского приложения)
+    if (deal.appType === 'team' && userId && deal.userId && String(deal.userId) !== String(userId)) {
+      return res.status(403).json({ error: 'You can only delete your own deals' });
+    }
+    
     const username = deal.username || 'неизвестный';
     deals.splice(dealIndex, 1);
     saveDeals(deals);
@@ -429,6 +575,175 @@ app.get('/api/ping', (req, res) => {
     timestamp: new Date().toISOString(),
     message: 'Server is alive' 
   });
+});
+
+// ========== ENDPOINTS ДЛЯ КОМАНДНОГО ПРИЛОЖЕНИЯ ==========
+
+// Получение суммы для командного приложения
+app.get('/api/team/sum', (req, res) => {
+  try {
+    const userId = req.query.userId || null;
+    const data = getTeamSumData(userId);
+    res.json(data);
+  } catch (error) {
+    console.error('Ошибка получения суммы команды:', error);
+    res.status(500).json({ error: 'Ошибка получения суммы' });
+  }
+});
+
+// Получение сделок для командного приложения (с фильтрацией)
+app.get('/api/team/deals', (req, res) => {
+  try {
+    const userId = req.query.userId || null;
+    const filter = req.query.filter || 'all'; // 'all', 'personal', 'general'
+    const deals = loadDeals();
+    
+    let filteredDeals = deals;
+    
+    // Фильтруем по типу
+    if (filter === 'personal' && userId) {
+      filteredDeals = deals.filter(d => d.userId && String(d.userId) === String(userId));
+    } else if (filter === 'general') {
+      // Все сделки (личные + общие)
+      filteredDeals = deals;
+    }
+    
+    // Сортируем по дате (новые сверху)
+    filteredDeals.sort((a, b) => new Date(b.date) - new Date(a.date));
+    res.json(filteredDeals);
+  } catch (error) {
+    console.error('Ошибка получения сделок команды:', error);
+    res.json([]);
+  }
+});
+
+// Получение турнирной таблицы
+app.get('/api/leaderboard', (req, res) => {
+  try {
+    const leaderboard = getLeaderboard();
+    res.json(leaderboard);
+  } catch (error) {
+    console.error('Ошибка получения турнирной таблицы:', error);
+    res.json([]);
+  }
+});
+
+// Получение заданий
+app.get('/api/tasks', (req, res) => {
+  try {
+    const tasks = loadTasks();
+    // Сортируем по дате создания (новые сверху)
+    tasks.sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
+    res.json(tasks);
+  } catch (error) {
+    console.error('Ошибка получения заданий:', error);
+    res.json([]);
+  }
+});
+
+// Создание задания (только админ)
+app.post('/api/tasks', async (req, res) => {
+  try {
+    const { title, description, reward, isAdmin } = req.body;
+    
+    // Проверка прав (только админ может создавать задания)
+    // В реальном приложении здесь должна быть проверка через Telegram WebApp
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Only admin can create tasks' });
+    }
+    
+    if (!title || !description || !reward) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    const tasks = loadTasks();
+    const newTask = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+      title,
+      description,
+      reward: Number(reward) || 0,
+      createdAt: new Date().toISOString(),
+      completedBy: [] // Массив userId пользователей, выполнивших задание
+    };
+    
+    tasks.push(newTask);
+    saveTasks(tasks);
+    
+    res.json({ ok: true, task: newTask });
+  } catch (error) {
+    console.error('Ошибка создания задания:', error);
+    res.status(500).json({ error: 'Ошибка создания задания' });
+  }
+});
+
+// Обновление задания (отметка о выполнении)
+app.patch('/api/tasks/:id', async (req, res) => {
+  try {
+    const taskId = req.params.id;
+    const { userId, action } = req.body; // action: 'complete' или 'uncomplete'
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    
+    const tasks = loadTasks();
+    const taskIndex = tasks.findIndex(t => t.id === taskId);
+    
+    if (taskIndex === -1) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    
+    const task = tasks[taskIndex];
+    
+    if (action === 'complete') {
+      // Добавляем userId в список выполнивших, если его там нет
+      if (!task.completedBy) {
+        task.completedBy = [];
+      }
+      if (!task.completedBy.includes(String(userId))) {
+        task.completedBy.push(String(userId));
+      }
+    } else if (action === 'uncomplete') {
+      // Удаляем userId из списка
+      if (task.completedBy) {
+        task.completedBy = task.completedBy.filter(id => String(id) !== String(userId));
+      }
+    }
+    
+    saveTasks(tasks);
+    
+    res.json({ ok: true, task: tasks[taskIndex] });
+  } catch (error) {
+    console.error('Ошибка обновления задания:', error);
+    res.status(500).json({ error: 'Ошибка обновления задания' });
+  }
+});
+
+// Удаление задания (только админ)
+app.delete('/api/tasks/:id', async (req, res) => {
+  try {
+    const taskId = req.params.id;
+    const { isAdmin } = req.body;
+    
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Only admin can delete tasks' });
+    }
+    
+    const tasks = loadTasks();
+    const taskIndex = tasks.findIndex(t => t.id === taskId);
+    
+    if (taskIndex === -1) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    
+    tasks.splice(taskIndex, 1);
+    saveTasks(tasks);
+    
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Ошибка удаления задания:', error);
+    res.status(500).json({ error: 'Ошибка удаления задания' });
+  }
 });
 
 // Запуск сервера
