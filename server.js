@@ -1067,11 +1067,36 @@ app.post('/api/tasks/:id/confirm', async (req, res) => {
     
     const task = tasks[taskIndex];
     
-    // Удаляем из pending
-    if (task.pendingCompletions) {
-      const pendingIndex = task.pendingCompletions.findIndex(p => String(p.userId) === String(userId));
-      if (pendingIndex !== -1) {
-        task.pendingCompletions.splice(pendingIndex, 1);
+    // Если задание уже подтверждено для кого-то, отклоняем всех остальных
+    if (task.completedBy && task.completedBy.length > 0) {
+      // Задание уже имеет победителя, отклоняем всех из pending
+      if (task.pendingCompletions) {
+        const rejectedUsers = task.pendingCompletions.filter(p => String(p.userId) !== String(userId));
+        task.pendingCompletions = [];
+        
+        // Отправляем уведомления отклоненным пользователям
+        for (const rejected of rejectedUsers) {
+          try {
+            await sendNotificationToUser(rejected.userId, `❌ Ваше выполнение задания "${task.title}" отклонено. Победитель уже определен.`);
+          } catch (error) {
+            console.error('Ошибка отправки уведомления отклоненному пользователю:', error);
+          }
+        }
+      }
+    } else {
+      // Первое подтверждение - отклоняем всех остальных из pending
+      if (task.pendingCompletions) {
+        const rejectedUsers = task.pendingCompletions.filter(p => String(p.userId) !== String(userId));
+        task.pendingCompletions = [];
+        
+        // Отправляем уведомления отклоненным пользователям
+        for (const rejected of rejectedUsers) {
+          try {
+            await sendNotificationToUser(rejected.userId, `❌ Ваше выполнение задания "${task.title}" отклонено. Победитель уже определен.`);
+          } catch (error) {
+            console.error('Ошибка отправки уведомления отклоненному пользователю:', error);
+          }
+        }
       }
     }
     
@@ -1085,7 +1110,7 @@ app.post('/api/tasks/:id/confirm', async (req, res) => {
     
     saveTasks(tasks);
     
-    // Отправляем уведомление пользователю
+    // Отправляем уведомление подтвержденному пользователю
     try {
       await sendNotificationToUser(userId, `✅ Ваше выполнение задания "${task.title}" подтверждено! Награда: ${task.reward}₽`);
     } catch (error) {
