@@ -50,12 +50,12 @@ function saveDeals(deals) {
   }
 }
 
-// Функция отправки сообщения в Telegram
+// Функция отправки сообщения в Telegram (возвращает message_id)
 async function sendTelegramMessage(text) {
   const chatId = TELEGRAM_CHAT_ID;
   if (!chatId) {
     console.log('⚠️ TELEGRAM_CHAT_ID не установлен, сообщение не отправлено:', text);
-    return;
+    return null;
   }
 
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
@@ -85,8 +85,15 @@ async function sendTelegramMessage(text) {
       });
       res.on('end', () => {
         if (res.statusCode === 200) {
-          console.log('✅ Telegram сообщение отправлено:', text);
-          resolve(responseData);
+          try {
+            const response = JSON.parse(responseData);
+            const messageId = response.result && response.result.message_id;
+            console.log('✅ Telegram сообщение отправлено:', text, 'message_id:', messageId);
+            resolve(messageId);
+          } catch (e) {
+            console.log('✅ Telegram сообщение отправлено:', text);
+            resolve(null);
+          }
         } else {
           console.error('❌ Ошибка отправки Telegram сообщения:', res.statusCode, responseData);
           reject(new Error(`HTTP ${res.statusCode}: ${responseData}`));
@@ -97,6 +104,58 @@ async function sendTelegramMessage(text) {
     req.on('error', (error) => {
       console.error('❌ Ошибка запроса к Telegram API:', error);
       reject(error);
+    });
+
+    req.write(data);
+    req.end();
+  });
+}
+
+// Функция удаления сообщения в Telegram
+async function deleteTelegramMessage(messageId) {
+  const chatId = TELEGRAM_CHAT_ID;
+  if (!chatId || !messageId) {
+    return;
+  }
+
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteMessage`;
+  const data = JSON.stringify({
+    chat_id: chatId,
+    message_id: messageId
+  });
+
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+    const options = {
+      hostname: urlObj.hostname,
+      port: 443,
+      path: urlObj.pathname + urlObj.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': data.length
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let responseData = '';
+      res.on('data', (chunk) => {
+        responseData += chunk;
+      });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          console.log('✅ Telegram сообщение удалено, message_id:', messageId);
+          resolve(true);
+        } else {
+          console.error('❌ Ошибка удаления Telegram сообщения:', res.statusCode, responseData);
+          resolve(false); // Не отклоняем, если не удалось удалить
+        }
+      });
+    });
+
+    req.on('error', (error) => {
+      console.error('❌ Ошибка запроса к Telegram API:', error);
+      resolve(false); // Не отклоняем, если не удалось удалить
     });
 
     req.write(data);
@@ -230,15 +289,25 @@ app.post('/api/deals', async (req, res) => {
       username: usernameFormatted,
       amount: DEAL_AMOUNT,
       date: new Date().toISOString(),
-      status: 'pending'
+      status: 'pending',
+      telegramMessageId: null
     };
     
     deals.push(newDeal);
     saveDeals(deals);
 
-    // Отправляем уведомление в Telegram
+    // Отправляем уведомление в Telegram и сохраняем message_id
     try {
-      await sendTelegramMessage(`Сделка создалась ${usernameFormatted}`);
+      const messageId = await sendTelegramMessage(`Сделка создалась ${usernameFormatted}`);
+      if (messageId) {
+        newDeal.telegramMessageId = messageId;
+        // Обновляем сделку с message_id
+        const dealIndex = deals.findIndex(d => d.id === id);
+        if (dealIndex !== -1) {
+          deals[dealIndex].telegramMessageId = messageId;
+          saveDeals(deals);
+        }
+      }
     } catch (error) {
       console.error('Ошибка отправки Telegram уведомления:', error);
     }
@@ -269,18 +338,33 @@ app.patch('/api/deals/:id', async (req, res) => {
     }
 
     const deal = deals[dealIndex];
+    const oldMessageId = deal.telegramMessageId;
+    
     deals[dealIndex].status = status;
     saveDeals(deals);
 
-    // Отправляем уведомление в Telegram
+    // Удаляем старое сообщение о создании сделки и отправляем новое
     try {
-      if (status === 'success') {
-        await sendTelegramMessage(`Сделка успешна ${deal.username}`);
-      } else if (status === 'failed') {
-        await sendTelegramMessage(`Сделка провалена ${deal.username}`);
+      if (status === 'success' || status === 'failed') {
+        // Удаляем старое сообщение о создании
+        if (oldMessageId) {
+          await deleteTelegramMessage(oldMessageId);
+        }
+        
+        // Отправляем новое сообщение о статусе
+        const messageText = status === 'success' 
+          ? `Сделка успешна ${deal.username}` 
+          : `Сделка провалена ${deal.username}`;
+        const newMessageId = await sendTelegramMessage(messageText);
+        
+        // Сохраняем новый message_id
+        if (newMessageId) {
+          deals[dealIndex].telegramMessageId = newMessageId;
+          saveDeals(deals);
+        }
       }
     } catch (error) {
-      console.error('Ошибка отправки Telegram уведомления:', error);
+      console.error('Ошибка обновления Telegram уведомления:', error);
     }
 
     res.json({
