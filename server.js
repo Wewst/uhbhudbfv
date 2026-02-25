@@ -11,10 +11,46 @@ const DEAL_AMOUNT_TEAM = 2000; // Сумма для командного при�
 
 // Telegram Bot настройки (жёстко прописанные данные)
 const TELEGRAM_BOT_TOKEN = '7840364464:AAEuBsIUKTnWxCnTaX0jn9WUMC5c4rp2nEk';
-// Группа, куда всегда отправляем сообщения
+// Группа, куда всегда отправляем сообщения (только для сделок)
 const TELEGRAM_CHAT_ID = '-5240130674';
 // Бот для уведомлений о первенстве
 const NOTIFICATION_BOT_TOKEN = '8671998094:AAEyg-2G8cHIoTQT3gCjm1X5QiyW31D4WQ';
+// ID админа для отправки уведомлений в ЛС (загружается из файла при запуске)
+let ADMIN_USER_ID = null;
+
+// Загрузка ID админа из файла
+function loadAdminId() {
+  ensureDataDir();
+  if (!fs.existsSync(adminIdFile)) {
+    return null;
+  }
+  try {
+    const data = fs.readFileSync(adminIdFile, 'utf8');
+    const adminData = JSON.parse(data);
+    return adminData.userId || null;
+  } catch (error) {
+    console.error('Ошибка чтения файла adminId.json:', error);
+    return null;
+  }
+}
+
+// Сохранение ID админа в файл
+function saveAdminId(userId) {
+  ensureDataDir();
+  try {
+    fs.writeFileSync(adminIdFile, JSON.stringify({ userId: String(userId) }, null, 2), 'utf8');
+    ADMIN_USER_ID = String(userId);
+    console.log('✅ ADMIN_USER_ID сохранен:', ADMIN_USER_ID);
+  } catch (error) {
+    console.error('Ошибка записи файла adminId.json:', error);
+  }
+}
+
+// Загружаем ID админа при запуске
+ADMIN_USER_ID = loadAdminId();
+if (ADMIN_USER_ID) {
+  console.log('✅ ADMIN_USER_ID загружен из файла:', ADMIN_USER_ID);
+}
 
 // Путь к файлу с данными
 const dataDir = path.join(__dirname, 'data');
@@ -22,6 +58,7 @@ const dealsFile = path.join(dataDir, 'deals.json');
 const tasksFile = path.join(dataDir, 'tasks.json'); // Файл для заданий
 const goalsFile = path.join(dataDir, 'goals.json'); // Файл для целей
 const usersFile = path.join(dataDir, 'users.json'); // Файл для хранения данных пользователей (для уведомлений)
+const adminIdFile = path.join(dataDir, 'adminId.json'); // Файл для хранения ID админа
 
 // Создание папки data если её нет
 function ensureDataDir() {
@@ -135,6 +172,17 @@ function saveUsers(users) {
 }
 
 // Функция отправки уведомления пользователю через бота уведомлений
+// Функция отправки уведомления админу в ЛС
+async function sendNotificationToAdmin(text) {
+  if (!ADMIN_USER_ID) {
+    console.log('⚠️ ADMIN_USER_ID не установлен, уведомление админу не отправлено. Текст:', text);
+    return false;
+  }
+  
+  console.log('📤 Отправка уведомления админу в ЛС (userId:', ADMIN_USER_ID + '):', text.substring(0, 50) + '...');
+  return await sendNotificationToUser(ADMIN_USER_ID, text);
+}
+
 async function sendNotificationToUser(userId, text) {
   if (!userId) {
     console.log('⚠️ userId не указан, уведомление не отправлено');
@@ -575,7 +623,28 @@ function checkLeaderboardChanges(currentLeaderboard) {
   }
 }
 
+// Endpoint для сохранения ID админа (вызывается из админского приложения при первом запросе)
+app.post('/api/admin/set-id', (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (userId) {
+      saveAdminId(userId);
+      res.json({ ok: true, adminId: ADMIN_USER_ID });
+    } else {
+      res.status(400).json({ error: 'userId is required' });
+    }
+  } catch (error) {
+    console.error('Ошибка установки ADMIN_USER_ID:', error);
+    res.status(500).json({ error: 'Ошибка установки ADMIN_USER_ID' });
+  }
+});
+
 app.get('/api/sum', (req, res) => {
+  // Сохраняем ID админа из запроса (если есть и еще не установлен)
+  const adminId = req.query.adminId || req.headers['x-admin-id'];
+  if (adminId && !ADMIN_USER_ID) {
+    saveAdminId(adminId);
+  }
   res.json(getSumData());
 });
 
@@ -1050,10 +1119,10 @@ app.patch('/api/tasks/:id', async (req, res) => {
           completedAt: new Date().toISOString() // Время выполнения
         });
         
-        // Мгновенно отправляем уведомление админу о выполнении задания
+        // Мгновенно отправляем уведомление админу в ЛС о выполнении задания
         try {
           const adminMessage = `📋 Новое выполнение задания!\n\nЗадание: ${task.title}\nПользователь: ${username || 'Пользователь'}\nВремя: ${new Date().toLocaleString('ru-RU')}`;
-          await sendTelegramMessage(adminMessage);
+          await sendNotificationToAdmin(adminMessage);
         } catch (error) {
           console.error('Ошибка отправки уведомления админу о выполнении задания:', error);
         }
@@ -1240,10 +1309,10 @@ function checkGoalExpiration() {
     
     // Если неделя истекла и админу еще не отправляли уведомление
     if (now >= weekEnd && !currentGoal.notificationSent) {
-      // Отправляем уведомление админу через основной бот
+      // Отправляем уведомление админу в ЛС
       const adminMessage = `⏰ Срок еженедельной цели истек!\n\nТекст цели: ${currentGoal.text}\n\nСоздайте новую цель для следующей недели.`;
       
-      sendTelegramMessage(adminMessage).then(() => {
+      sendNotificationToAdmin(adminMessage).then(() => {
         // Отмечаем, что уведомление отправлено
         currentGoal.notificationSent = true;
         const goalIndex = goals.findIndex(g => g.id === currentGoal.id);
@@ -1272,8 +1341,16 @@ app.listen(PORT, () => {
   ensureDataDir();
   
   if (TELEGRAM_CHAT_ID) {
-    console.log('✅ Telegram Chat ID установлен:', TELEGRAM_CHAT_ID);
+    console.log('✅ Telegram Chat ID установлен (для сделок в группу):', TELEGRAM_CHAT_ID);
   } else {
     console.log('⚠️ Telegram Chat ID не установлен в коде');
   }
+  
+  if (ADMIN_USER_ID) {
+    console.log('✅ ADMIN_USER_ID установлен (для уведомлений админу в ЛС):', ADMIN_USER_ID);
+  } else {
+    console.log('⚠️ ADMIN_USER_ID не установлен. Откройте админское приложение для автоматической установки.');
+  }
+  
+  console.log('📱 Бот для уведомлений:', NOTIFICATION_BOT_TOKEN ? 'настроен' : 'не настроен');
 });
