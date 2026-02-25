@@ -16,14 +16,76 @@ const PORT = process.env.PORT || 3000;
 const DEAL_AMOUNT = 9500;
 
 // Подключение к PostgreSQL
+// Парсим строку подключения и принудительно используем IPv4
+function parseDatabaseUrl(url) {
+  if (!url) return null;
+  
+  // Если в URL есть IPv6 адрес, заменяем на доменное имя
+  // Или парсим и пересобираем с принудительным IPv4
+  try {
+    const urlObj = new URL(url);
+    
+    // Если хост - это IPv6 адрес, нужно использовать доменное имя
+    if (urlObj.hostname.includes(':')) {
+      // Это IPv6 адрес, нужно найти доменное имя
+      // Попробуем извлечь из строки доменное имя Supabase
+      const match = url.match(/@([^:]+):/);
+      if (match && match[1].includes('supabase.co')) {
+        urlObj.hostname = match[1];
+      }
+    }
+    
+    return urlObj.toString();
+  } catch (e) {
+    return url; // Возвращаем как есть, если не удалось распарсить
+  }
+}
+
+const dbUrl = process.env.DATABASE_URL;
+const parsedUrl = parseDatabaseUrl(dbUrl);
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+  connectionString: parsedUrl || dbUrl,
+  ssl: dbUrl ? { 
+    rejectUnauthorized: false,
+    require: true 
+  } : false,
+  // Дополнительные настройки для Supabase
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000
 });
 
 // Инициализация базы данных (создание таблицы если её нет)
 async function initDatabase() {
   try {
+    // Проверка наличия DATABASE_URL
+    if (!process.env.DATABASE_URL) {
+      throw new Error('DATABASE_URL не установлена! Проверьте переменные окружения в Render.');
+    }
+    
+    // Проверка формата строки подключения
+    const dbUrl = process.env.DATABASE_URL;
+    console.log('Проверка строки подключения...');
+    console.log('URL (без пароля):', dbUrl ? dbUrl.replace(/:[^:@]+@/, ':****@') : 'НЕ УСТАНОВЛЕНА!');
+    
+    if (!dbUrl.startsWith('postgresql://') && !dbUrl.startsWith('postgres://')) {
+      throw new Error('DATABASE_URL должна начинаться с postgresql:// или postgres://');
+    }
+    
+    // Проверка на IPv6 адрес в строке
+    if (dbUrl.includes('2a05:') || dbUrl.match(/\[.*:.*\]/) || dbUrl.match(/[0-9a-f]{4}:[0-9a-f]{4}:/i)) {
+      console.error('❌ ОШИБКА: Обнаружен IPv6 адрес в строке подключения!');
+      console.error('❌ Нужно использовать доменное имя db.xxxxx.supabase.co вместо IP адреса!');
+      console.error('❌ Правильная строка должна быть:');
+      console.error('   postgresql://postgres:G2HTgIhxJ956SiCH@db.jloikvxxxnpptvzdaidv.supabase.co:5432/postgres');
+      throw new Error('Используется IPv6 адрес вместо доменного имени. Обновите DATABASE_URL в Render на строку с доменным именем db.jloikvxxxnpptvzdaidv.supabase.co');
+    }
+    
+    // Проверка, что используется доменное имя Supabase
+    if (!dbUrl.includes('supabase.co')) {
+      console.error('⚠️ ВНИМАНИЕ: В строке подключения нет доменного имени supabase.co!');
+    }
+    
     // Проверка подключения к базе данных
     console.log('Проверка подключения к базе данных...');
     const testQuery = await pool.query('SELECT NOW()');
