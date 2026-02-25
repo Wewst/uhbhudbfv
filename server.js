@@ -64,14 +64,11 @@ async function getConnectionConfig(url) {
             });
           } else {
             console.error(`❌ Ошибка DNS lookup для pooler: ${err ? err.message : 'unknown'}`);
-            console.log(`⚠️ Пробуем использовать pooler hostname напрямую...`);
-            // Если не удалось резолвить, используем pooler hostname напрямую
+            console.log(`⚠️ DNS не резолвится, используем connectionString напрямую...`);
+            // Если DNS не работает, используем connectionString напрямую
+            // pg библиотека сама попытается подключиться
             resolve({
-              host: hostname,
-              port: parseInt(urlObj.port) || 5432,
-              database: urlObj.pathname.slice(1) || 'postgres',
-              user: urlObj.username || 'postgres',
-              password: urlObj.password,
+              connectionString: url,
               ssl: { rejectUnauthorized: false, require: true }
             });
           }
