@@ -7,6 +7,10 @@ if (process.env.NODE_ENV !== 'production') {
   }
 }
 
+// Принудительно используем IPv4 для всех DNS запросов (важно для Render)
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
+
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -16,36 +20,10 @@ const PORT = process.env.PORT || 3000;
 const DEAL_AMOUNT = 9500;
 
 // Подключение к PostgreSQL
-// Парсим строку подключения и принудительно используем IPv4
-function parseDatabaseUrl(url) {
-  if (!url) return null;
-  
-  // Если в URL есть IPv6 адрес, заменяем на доменное имя
-  // Или парсим и пересобираем с принудительным IPv4
-  try {
-    const urlObj = new URL(url);
-    
-    // Если хост - это IPv6 адрес, нужно использовать доменное имя
-    if (urlObj.hostname.includes(':')) {
-      // Это IPv6 адрес, нужно найти доменное имя
-      // Попробуем извлечь из строки доменное имя Supabase
-      const match = url.match(/@([^:]+):/);
-      if (match && match[1].includes('supabase.co')) {
-        urlObj.hostname = match[1];
-      }
-    }
-    
-    return urlObj.toString();
-  } catch (e) {
-    return url; // Возвращаем как есть, если не удалось распарсить
-  }
-}
-
 const dbUrl = process.env.DATABASE_URL;
-const parsedUrl = parseDatabaseUrl(dbUrl);
 
 const pool = new Pool({
-  connectionString: parsedUrl || dbUrl,
+  connectionString: dbUrl,
   ssl: dbUrl ? { 
     rejectUnauthorized: false,
     require: true 
