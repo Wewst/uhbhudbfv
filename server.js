@@ -244,7 +244,8 @@ function getSumData() {
     let totalEmployees = 0, monthEmployees = 0, dayEmployees = 0;
 
   for (const d of deals) {
-    const amt = d.amount || DEAL_AMOUNT_ADMIN;
+    // В админском приложении все сделки показываются как 9500₽
+    const amt = DEAL_AMOUNT_ADMIN;
     const t = new Date(d.date).getTime();
       const deductions = calculateDeductions(amt);
       
