@@ -57,6 +57,12 @@ async function sendTelegramMessage(text) {
     console.log('⚠️ TELEGRAM_CHAT_ID не установлен, сообщение не отправлено:', text);
     return null;
   }
+  
+  // Проверяем, что текст не пустой
+  if (!text || typeof text !== 'string' || text.trim().length === 0) {
+    console.log('⚠️ Текст сообщения пустой, сообщение не отправлено');
+    return null;
+  }
 
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
   const data = JSON.stringify({
@@ -352,9 +358,10 @@ app.patch('/api/deals/:id', async (req, res) => {
         }
         
         // Отправляем новое сообщение о статусе
+        const username = deal.username || 'неизвестный';
         const messageText = status === 'success' 
-          ? `Сделка успешна ${deal.username}` 
-          : `Сделка провалена ${deal.username}`;
+          ? `Сделка успешна ${username}` 
+          : `Сделка провалена ${username}`;
         const newMessageId = await sendTelegramMessage(messageText);
         
         // Сохраняем новый message_id
@@ -388,12 +395,13 @@ app.delete('/api/deals/:id', async (req, res) => {
     }
 
     const deal = deals[dealIndex];
+    const username = deal.username || 'неизвестный';
     deals.splice(dealIndex, 1);
     saveDeals(deals);
 
     // Отправляем уведомление в Telegram
     try {
-      await sendTelegramMessage(`Сделка удалена ${deal.username}`);
+      await sendTelegramMessage(`Сделка удалена ${username}`);
     } catch (error) {
       console.error('Ошибка отправки Telegram уведомления:', error);
     }
