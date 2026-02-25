@@ -321,6 +321,24 @@ app.delete('/api/deals/:id', async (req, res) => {
   }
 });
 
+// Endpoint для пинга (чтобы Render не засыпал)
+app.get('/ping', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    message: 'Server is alive' 
+  });
+});
+
+// Альтернативный эндпоинт для пинга
+app.get('/api/ping', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    message: 'Server is alive' 
+  });
+});
+
 // Запуск сервера
 app.listen(PORT, () => {
   console.log('✅ Сервер запущен успешно!');
