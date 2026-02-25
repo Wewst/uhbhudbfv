@@ -474,23 +474,22 @@ app.get('/api/ping', (req, res) => {
   });
 });
 
-// Функция получения всех сообщений бота из группы через getUpdates
+// Функция получения сообщений бота через getUpdates
 // ВАЖНО: getUpdates возвращает только необработанные обновления
-// Но мы используем offset=0 чтобы получить максимум доступных
+// Для получения уже обработанных используем сохраненные сообщения из файла
 async function getAllBotMessages() {
   // Получаем ID бота
   const botInfo = await getBotInfo();
   const botId = botInfo.id;
   
-  console.log('📥 Получаю сообщения бота из группы через getUpdates...');
-  console.log('⚠️ ВАЖНО: getUpdates возвращает только необработанные обновления');
-  console.log('⚠️ Если обновления уже обработаны, они не вернутся');
+  console.log('📥 Получаю новые сообщения бота через getUpdates...');
+  console.log('💡 Для получения уже обработанных сообщений используются сохраненные из файла');
   
   let allUpdates = [];
-  let offset = 0; // Начинаем с начала
+  let offset = 0;
   let hasMore = true;
   let attempts = 0;
-  const maxAttempts = 200; // Увеличиваем для получения большего количества
+  const maxAttempts = 200;
   
   // Получаем обновления порциями
   while (hasMore && attempts < maxAttempts) {
@@ -555,7 +554,9 @@ async function getAllBotMessages() {
         
         allUpdates = allUpdates.concat(botMessages);
         
-        // Обновляем offset
+        // ВАЖНО: НЕ подтверждаем обновления (не увеличиваем offset)
+        // Это позволяет получать их снова при следующем запуске
+        // Но для получения новых обновлений все же нужно обновить offset
         const lastUpdateId = updates[updates.length - 1].update_id;
         offset = lastUpdateId + 1;
         
@@ -567,7 +568,6 @@ async function getAllBotMessages() {
           hasMore = false;
         }
         
-        // Небольшая задержка
         await new Promise(resolve => setTimeout(resolve, 50));
       }
     } catch (error) {
@@ -576,8 +576,17 @@ async function getAllBotMessages() {
     }
   }
   
-  console.log(`✅ Получено ${allUpdates.length} сообщений бота из группы через getUpdates`);
+  console.log(`✅ Получено ${allUpdates.length} новых сообщений бота через getUpdates`);
   return allUpdates;
+}
+
+// Функция получения сообщений бота через сохраненный файл
+// Это основной способ получения уже обработанных сообщений
+async function getSavedBotMessages() {
+  console.log('📁 Загружаю сохраненные сообщения бота из файла...');
+  const savedMessages = loadBotMessages();
+  console.log(`✅ Загружено ${savedMessages.length} сохраненных сообщений`);
+  return savedMessages;
 }
 
 // Функция получения ID бота
@@ -725,14 +734,16 @@ async function restoreDealsFromBotMessages() {
     const botId = botInfo.id;
     console.log('✅ ID бота:', botId);
     
-    // Загружаем сохраненные сообщения из файла (если есть)
-    const savedMessages = loadBotMessages();
+    // ВАЖНО: Сначала загружаем сохраненные сообщения (уже обработанные)
+    // Это основной источник данных, так как getUpdates не возвращает обработанные
+    const savedMessages = await getSavedBotMessages();
     console.log(`📁 Сохраненных сообщений в файле: ${savedMessages.length}`);
     
-    // Получаем сообщения через getUpdates
+    // Потом пытаемся получить новые сообщения через getUpdates
     let updates = [];
     try {
       updates = await getAllBotMessages();
+      console.log(`📨 Получено ${updates.length} новых сообщений через getUpdates`);
     } catch (error) {
       console.log('⚠️ Ошибка getUpdates:', error.message);
     }
@@ -741,24 +752,32 @@ async function restoreDealsFromBotMessages() {
     const messagesFromUpdates = [];
     for (const update of updates) {
       if (update.message && update.message.text) {
-        messagesFromUpdates.push({
+        const msg = {
           messageId: update.message.message_id,
           text: update.message.text,
           date: new Date(update.message.date * 1000).toISOString(),
           chatId: String(update.message.chat.id)
-        });
+        };
+        messagesFromUpdates.push(msg);
+        
+        // Сразу сохраняем новое сообщение в файл
+        saveBotMessage(msg.messageId, msg.text, msg.date);
       }
     }
     
-    // Объединяем все сообщения (сначала сохраненные, потом из getUpdates)
+    // Объединяем все сообщения
+    // ВАЖНО: Сначала сохраненные (это уже обработанные сообщения)
+    // Потом добавляем новые из getUpdates
     const allMessages = [...savedMessages];
     for (const msg of messagesFromUpdates) {
       if (!allMessages.find(m => m.messageId === msg.messageId)) {
         allMessages.push(msg);
-        // Сохраняем в файл для будущих запусков
-        saveBotMessage(msg.messageId, msg.text, msg.date);
       }
     }
+    
+    console.log(`📝 Всего сообщений (сохраненные + новые): ${allMessages.length}`);
+    console.log(`   - Сохраненные (уже обработанные): ${savedMessages.length}`);
+    console.log(`   - Новые из getUpdates: ${messagesFromUpdates.length}`);
     
     // Фильтруем только сообщения из нужной группы
     const groupMessages = allMessages.filter(msg => 
