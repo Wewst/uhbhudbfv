@@ -827,7 +827,7 @@ app.get('/api/goal', (req, res) => {
   }
 });
 
-// Создание еженедельной цели (только админ, только в понедельник)
+// Создание еженедельной цели (только админ, можно в любой день, но нельзя менять цель на срок недели)
 app.post('/api/goal', async (req, res) => {
   try {
     const { text, isAdmin } = req.body;
@@ -840,27 +840,30 @@ app.post('/api/goal', async (req, res) => {
       return res.status(400).json({ error: 'Goal text is required' });
     }
     
-    // Проверяем, что сегодня понедельник
     const today = new Date();
-    const dayOfWeek = today.getDay(); // 0 = воскресенье, 1 = понедельник
-    if (dayOfWeek !== 1) {
-      return res.status(400).json({ error: 'Goals can only be created on Monday' });
-    }
-    
     const goals = loadGoals();
     
     // Проверяем, не создана ли уже цель на эту неделю
+    // Неделя начинается с понедельника
+    const dayOfWeek = today.getDay(); // 0 = воскресенье, 1 = понедельник
     const weekStart = new Date(today);
     weekStart.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
     weekStart.setHours(0, 0, 0, 0);
     
+    // Проверяем, есть ли цель на эту неделю
     const existingGoal = goals.find(g => {
       const goalDate = new Date(g.createdAt);
-      return goalDate >= weekStart;
+      const goalWeekStart = new Date(goalDate);
+      const goalDayOfWeek = goalDate.getDay();
+      goalWeekStart.setDate(goalDate.getDate() - (goalDayOfWeek === 0 ? 6 : goalDayOfWeek - 1));
+      goalWeekStart.setHours(0, 0, 0, 0);
+      
+      // Проверяем, что цель относится к той же неделе
+      return goalWeekStart.getTime() === weekStart.getTime();
     });
     
     if (existingGoal) {
-      return res.status(400).json({ error: 'Goal for this week already exists' });
+      return res.status(400).json({ error: 'Goal for this week already exists. You can create a new goal next week.' });
     }
     
     const newGoal = {
@@ -894,8 +897,36 @@ app.post('/api/goal', async (req, res) => {
   }
 });
 
-// Получение заданий
+// Получение заданий (для командного приложения - только неподтвержденные)
 app.get('/api/tasks', (req, res) => {
+  try {
+    const userId = req.query.userId || null;
+    const tasks = loadTasks();
+    
+    // Фильтруем: показываем только задания, которые пользователь еще не подтвердил
+    // или которые имеют pendingCompletions
+    const filteredTasks = tasks.filter(task => {
+      // Если у пользователя есть userId, проверяем, не подтверждено ли задание
+      if (userId) {
+        const isConfirmed = task.completedBy && task.completedBy.includes(String(userId));
+        // Показываем задание, если оно не подтверждено пользователем
+        return !isConfirmed;
+      }
+      // Если userId нет, показываем все задания
+      return true;
+    });
+    
+    // Сортируем по дате создания (новые сверху)
+    filteredTasks.sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
+    res.json(filteredTasks);
+  } catch (error) {
+    console.error('Ошибка получения заданий:', error);
+    res.json([]);
+  }
+});
+
+// Получение всех заданий (для админского приложения - с pendingCompletions)
+app.get('/api/admin/tasks', (req, res) => {
   try {
     const tasks = loadTasks();
     // Сортируем по дате создания (новые сверху)
@@ -1131,6 +1162,48 @@ app.delete('/api/tasks/:id', async (req, res) => {
     res.status(500).json({ error: 'Ошибка удаления задания' });
   }
 });
+
+// Проверка истечения срока цели и отправка уведомления админу
+function checkGoalExpiration() {
+  try {
+    const goals = loadGoals();
+    if (goals.length === 0) return;
+    
+    const currentGoal = goals[goals.length - 1];
+    if (!currentGoal || !currentGoal.weekStart) return;
+    
+    const weekStart = new Date(currentGoal.weekStart);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 7); // Неделя = 7 дней
+    
+    const now = new Date();
+    
+    // Если неделя истекла и админу еще не отправляли уведомление
+    if (now >= weekEnd && !currentGoal.notificationSent) {
+      // Отправляем уведомление админу через основной бот
+      const adminMessage = `⏰ Срок еженедельной цели истек!\n\nТекст цели: ${currentGoal.text}\n\nСоздайте новую цель для следующей недели.`;
+      
+      sendTelegramMessage(adminMessage).then(() => {
+        // Отмечаем, что уведомление отправлено
+        currentGoal.notificationSent = true;
+        const goalIndex = goals.findIndex(g => g.id === currentGoal.id);
+        if (goalIndex !== -1) {
+          goals[goalIndex].notificationSent = true;
+          saveGoals(goals);
+        }
+      }).catch(error => {
+        console.error('Ошибка отправки уведомления админу о цели:', error);
+      });
+    }
+  } catch (error) {
+    console.error('Ошибка проверки истечения цели:', error);
+  }
+}
+
+// Проверяем истечение цели каждые 6 часов
+setInterval(checkGoalExpiration, 6 * 60 * 60 * 1000);
+// Проверяем сразу при запуске
+checkGoalExpiration();
 
 // Запуск сервера
 app.listen(PORT, () => {
