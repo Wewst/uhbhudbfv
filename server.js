@@ -305,8 +305,8 @@ function getTeamSumData(userId) {
     const todayStart = startOfDay(now);
     const monthStart = startOfMonth(now);
 
-    let totalAll = 0; // Общая сумма всех сделок (admin + team, но admin показывается как 2000)
-    let totalPersonal = 0; // Персональная сумма пользователя
+    let totalAll = 0; // Общая сумма только успешных сделок (admin + team, но admin показывается как 2000)
+    let totalPersonal = 0; // Персональная сумма пользователя (все статусы)
     let monthAll = 0, dayAll = 0;
     let monthPersonal = 0, dayPersonal = 0;
 
@@ -319,12 +319,14 @@ function getTeamSumData(userId) {
         dealAmount = DEAL_AMOUNT_TEAM;
       }
       
-      // Общая сумма (все сделки)
-      totalAll += dealAmount;
-      if (t >= monthStart) monthAll += dealAmount;
-      if (t >= todayStart) dayAll += dealAmount;
+      // Общая сумма (только успешные сделки)
+      if (d.status === 'success') {
+        totalAll += dealAmount;
+        if (t >= monthStart) monthAll += dealAmount;
+        if (t >= todayStart) dayAll += dealAmount;
+      }
       
-      // Персональная сумма (только сделки пользователя)
+      // Персональная сумма (только сделки пользователя, все статусы)
       if (userId && d.userId && String(d.userId) === String(userId)) {
         totalPersonal += dealAmount;
         if (t >= monthStart) monthPersonal += dealAmount;
@@ -603,11 +605,11 @@ app.get('/api/team/deals', (req, res) => {
     
     // Фильтруем по типу
     if (filter === 'personal' && userId) {
-      // Личные: только сделки конкретного пользователя
+      // Личные: только сделки конкретного пользователя (все статусы)
       filteredDeals = deals.filter(d => d.userId && String(d.userId) === String(userId));
     } else if (filter === 'all') {
-      // Общие: все сделки (командные + админские, но админские показываются как 2000₽)
-      filteredDeals = deals;
+      // Общие: только успешные сделки (status === 'success')
+      filteredDeals = deals.filter(d => d.status === 'success');
     }
     
     // Сортируем по дате (новые сверху)
