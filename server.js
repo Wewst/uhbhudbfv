@@ -29,7 +29,7 @@ async function getConnectionConfig(url) {
   
   try {
     const urlObj = new URL(url);
-    const hostname = urlObj.hostname;
+    let hostname = urlObj.hostname;
     
     // Если это уже IPv4 адрес, используем параметры подключения напрямую
     if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
@@ -43,8 +43,53 @@ async function getConnectionConfig(url) {
       };
     }
     
+    // Автоматически преобразуем обычный Supabase URL в Session Pooler URL (IPv4 совместимый)
+    // Если hostname начинается с db.xxx.supabase.co, преобразуем в pooler
+    if (hostname.includes('db.') && hostname.includes('.supabase.co')) {
+      const projectRef = hostname.match(/db\.([^.]+)\.supabase\.co/);
+      if (projectRef && projectRef[1]) {
+        // Session Pooler для IPv4 (порт 5432)
+        const poolerHostname = `aws-0-${projectRef[1]}.pooler.supabase.com`;
+        const poolerUser = `${urlObj.username || 'postgres'}.${projectRef[1]}`;
+        
+        console.log(`🔄 Обнаружен Supabase URL - преобразуем в Session Pooler (IPv4)`);
+        console.log(`   Оригинальный: ${hostname}`);
+        console.log(`   Pooler: ${poolerHostname}`);
+        console.log(`   User: ${poolerUser}`);
+        
+        // Пробуем резолвить pooler в IPv4
+        return new Promise((resolve) => {
+          dns.lookup(poolerHostname, { family: 4, all: false }, (err, address) => {
+            if (!err && address) {
+              console.log(`✅ DNS резолв Session Pooler: ${poolerHostname} -> ${address} (IPv4)`);
+              resolve({
+                host: address,
+                port: 5432, // Session Pooler использует порт 5432 для IPv4
+                database: urlObj.pathname.slice(1) || 'postgres',
+                user: poolerUser, // Важно: user должен быть postgres.PROJECT_REF
+                password: urlObj.password,
+                ssl: { rejectUnauthorized: false, require: true }
+              });
+            } else {
+              console.error(`❌ Ошибка DNS lookup для pooler: ${err ? err.message : 'unknown'}`);
+              console.log(`⚠️ Пробуем использовать pooler hostname напрямую...`);
+              // Если не удалось резолвить, используем pooler hostname напрямую
+              resolve({
+                host: poolerHostname,
+                port: 5432,
+                database: urlObj.pathname.slice(1) || 'postgres',
+                user: poolerUser,
+                password: urlObj.password,
+                ssl: { rejectUnauthorized: false, require: true }
+              });
+            }
+          });
+        });
+      }
+    }
+    
     // Резолвим доменное имя в IPv4 адрес
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       dns.lookup(hostname, { family: 4, all: false }, (err, address) => {
         if (err) {
           console.error('❌ Ошибка DNS lookup:', err.message);
