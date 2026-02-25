@@ -136,16 +136,25 @@ function saveUsers(users) {
 
 // Функция отправки уведомления пользователю через бота уведомлений
 async function sendNotificationToUser(userId, text) {
-  if (!userId) return;
+  if (!userId) {
+    console.log('⚠️ userId не указан, уведомление не отправлено');
+    return false;
+  }
+  
+  // Проверяем, что текст не пустой
+  if (!text || typeof text !== 'string' || text.trim().length === 0) {
+    console.log('⚠️ Текст уведомления пустой, уведомление не отправлено для userId:', userId);
+    return false;
+  }
   
   const url = `https://api.telegram.org/bot${NOTIFICATION_BOT_TOKEN}/sendMessage`;
   const data = JSON.stringify({
-    chat_id: userId,
-    text: text,
+    chat_id: String(userId),
+    text: text.trim(),
     parse_mode: 'HTML'
   });
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const urlObj = new URL(url);
     const options = {
       hostname: urlObj.hostname,
@@ -154,7 +163,7 @@ async function sendNotificationToUser(userId, text) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Content-Length': data.length
+        'Content-Length': Buffer.byteLength(data, 'utf8')
       }
     };
 
@@ -165,8 +174,19 @@ async function sendNotificationToUser(userId, text) {
       });
       res.on('end', () => {
         if (res.statusCode === 200) {
-          console.log('✅ Уведомление отправлено пользователю', userId);
-          resolve(true);
+          try {
+            const response = JSON.parse(responseData);
+            if (response.ok) {
+              console.log('✅ Уведомление отправлено пользователю', userId);
+              resolve(true);
+            } else {
+              console.error('❌ Ошибка отправки уведомления:', res.statusCode, responseData);
+              resolve(false);
+            }
+          } catch (e) {
+            console.error('❌ Ошибка парсинга ответа:', responseData);
+            resolve(false);
+          }
         } else {
           console.error('❌ Ошибка отправки уведомления:', res.statusCode, responseData);
           resolve(false);
@@ -188,7 +208,7 @@ async function sendNotificationToUser(userId, text) {
 async function sendTelegramMessage(text) {
   const chatId = TELEGRAM_CHAT_ID;
   if (!chatId) {
-    console.log('⚠️ TELEGRAM_CHAT_ID не установлен, сообщение не отправлено:', text);
+    console.log('⚠️ TELEGRAM_CHAT_ID не установлен, сообщение не отправлено');
     return null;
   }
   
@@ -200,12 +220,12 @@ async function sendTelegramMessage(text) {
 
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
   const data = JSON.stringify({
-    chat_id: chatId,
-    text: text,
+    chat_id: String(chatId),
+    text: text.trim(),
     parse_mode: 'HTML'
   });
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const urlObj = new URL(url);
     const options = {
       hostname: urlObj.hostname,
@@ -214,7 +234,7 @@ async function sendTelegramMessage(text) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Content-Length': data.length
+        'Content-Length': Buffer.byteLength(data, 'utf8')
       }
     };
 
@@ -227,23 +247,28 @@ async function sendTelegramMessage(text) {
         if (res.statusCode === 200) {
           try {
             const response = JSON.parse(responseData);
-            const messageId = response.result && response.result.message_id;
-            console.log('✅ Telegram сообщение отправлено:', text, 'message_id:', messageId);
-            resolve(messageId);
+            if (response.ok && response.result) {
+              const messageId = response.result.message_id;
+              console.log('✅ Telegram сообщение отправлено:', text.substring(0, 50) + '...', 'message_id:', messageId);
+              resolve(messageId);
+            } else {
+              console.error('❌ Ошибка отправки Telegram сообщения:', responseData);
+              resolve(null);
+            }
           } catch (e) {
-            console.log('✅ Telegram сообщение отправлено:', text);
+            console.error('❌ Ошибка парсинга ответа Telegram:', responseData);
             resolve(null);
           }
         } else {
           console.error('❌ Ошибка отправки Telegram сообщения:', res.statusCode, responseData);
-          reject(new Error(`HTTP ${res.statusCode}: ${responseData}`));
+          resolve(null);
         }
       });
     });
 
     req.on('error', (error) => {
       console.error('❌ Ошибка запроса к Telegram API:', error);
-      reject(error);
+      resolve(null);
     });
 
     req.write(data);
@@ -536,10 +561,11 @@ function checkLeaderboardChanges(currentLeaderboard) {
       
       // Если первый место изменилось
       if (previousFirst && currentFirst && String(previousFirst.userId) !== String(currentFirst.userId)) {
-        // Отправляем уведомление предыдущему лидеру
-        sendNotificationToUser(previousFirst.userId, 
-          `⚠️ Вы потеряли первое место в турнирной таблице! Теперь лидер: ${currentFirst.username}`
-        );
+        // Отправляем уведомление предыдущему лидеру (персонально)
+        const message = `⚠️ Вы потеряли первое место в турнирной таблице!\n\nТеперь лидер: ${currentFirst.username || 'другой пользователь'}`;
+        sendNotificationToUser(previousFirst.userId, message).catch(error => {
+          console.error('Ошибка отправки уведомления о потере первенства:', error);
+        });
       }
     }
     
@@ -882,7 +908,7 @@ app.post('/api/goal', async (req, res) => {
       const message = `🎯 Новая еженедельная цель!\n\n${text}`;
       
       for (const userId in users) {
-        if (userId && userId !== 'undefined') {
+        if (userId && userId !== 'undefined' && userId !== 'null') {
           await sendNotificationToUser(userId, message);
         }
       }
@@ -974,7 +1000,7 @@ app.post('/api/tasks', async (req, res) => {
       
       // Отправляем всем пользователям, у которых есть userId
       for (const userId in users) {
-        if (userId && userId !== 'undefined') {
+        if (userId && userId !== 'undefined' && userId !== 'null') {
           await sendNotificationToUser(userId, message);
         }
       }
@@ -1023,6 +1049,14 @@ app.patch('/api/tasks/:id', async (req, res) => {
           avatar: avatar || null,
           completedAt: new Date().toISOString() // Время выполнения
         });
+        
+        // Мгновенно отправляем уведомление админу о выполнении задания
+        try {
+          const adminMessage = `📋 Новое выполнение задания!\n\nЗадание: ${task.title}\nПользователь: ${username || 'Пользователь'}\nВремя: ${new Date().toLocaleString('ru-RU')}`;
+          await sendTelegramMessage(adminMessage);
+        } catch (error) {
+          console.error('Ошибка отправки уведомления админу о выполнении задания:', error);
+        }
       }
     } else if (action === 'uncomplete') {
       // Удаляем из pending
@@ -1076,10 +1110,11 @@ app.post('/api/tasks/:id/confirm', async (req, res) => {
         
         // Отправляем уведомления отклоненным пользователям
         for (const rejected of rejectedUsers) {
-          try {
-            await sendNotificationToUser(rejected.userId, `❌ Ваше выполнение задания "${task.title}" отклонено. Победитель уже определен.`);
-          } catch (error) {
-            console.error('Ошибка отправки уведомления отклоненному пользователю:', error);
+          if (rejected && rejected.userId) {
+            const message = `❌ Ваше выполнение задания "${task.title}" отклонено. Победитель уже определен.`;
+            await sendNotificationToUser(rejected.userId, message).catch(error => {
+              console.error('Ошибка отправки уведомления отклоненному пользователю:', error);
+            });
           }
         }
       }
@@ -1091,10 +1126,11 @@ app.post('/api/tasks/:id/confirm', async (req, res) => {
         
         // Отправляем уведомления отклоненным пользователям
         for (const rejected of rejectedUsers) {
-          try {
-            await sendNotificationToUser(rejected.userId, `❌ Ваше выполнение задания "${task.title}" отклонено. Победитель уже определен.`);
-          } catch (error) {
-            console.error('Ошибка отправки уведомления отклоненному пользователю:', error);
+          if (rejected && rejected.userId) {
+            const message = `❌ Ваше выполнение задания "${task.title}" отклонено. Победитель уже определен.`;
+            await sendNotificationToUser(rejected.userId, message).catch(error => {
+              console.error('Ошибка отправки уведомления отклоненному пользователю:', error);
+            });
           }
         }
       }
@@ -1111,11 +1147,10 @@ app.post('/api/tasks/:id/confirm', async (req, res) => {
     saveTasks(tasks);
     
     // Отправляем уведомление подтвержденному пользователю
-    try {
-      await sendNotificationToUser(userId, `✅ Ваше выполнение задания "${task.title}" подтверждено! Награда: ${task.reward}₽`);
-    } catch (error) {
-      console.error('Ошибка отправки уведомления:', error);
-    }
+    const confirmMessage = `✅ Ваше выполнение задания "${task.title}" подтверждено! Награда: ${task.reward}₽`;
+    await sendNotificationToUser(userId, confirmMessage).catch(error => {
+      console.error('Ошибка отправки уведомления подтвержденному пользователю:', error);
+    });
     
     res.json({ ok: true, task: tasks[taskIndex] });
   } catch (error) {
@@ -1225,8 +1260,8 @@ function checkGoalExpiration() {
   }
 }
 
-// Проверяем истечение цели каждые 6 часов
-setInterval(checkGoalExpiration, 6 * 60 * 60 * 1000);
+// Проверяем истечение цели каждые 30 минут (для более быстрого уведомления)
+setInterval(checkGoalExpiration, 30 * 60 * 1000);
 // Проверяем сразу при запуске
 checkGoalExpiration();
 
