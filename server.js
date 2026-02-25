@@ -595,16 +595,17 @@ app.get('/api/team/sum', (req, res) => {
 app.get('/api/team/deals', (req, res) => {
   try {
     const userId = req.query.userId || null;
-    const filter = req.query.filter || 'all'; // 'all', 'personal', 'general'
+    const filter = req.query.filter || 'all'; // 'all', 'personal'
     const deals = loadDeals();
     
-    let filteredDeals = deals;
+    let filteredDeals = [];
     
     // Фильтруем по типу
     if (filter === 'personal' && userId) {
+      // Личные: только сделки конкретного пользователя
       filteredDeals = deals.filter(d => d.userId && String(d.userId) === String(userId));
-    } else if (filter === 'general') {
-      // Все сделки (личные + общие)
+    } else if (filter === 'all') {
+      // Общие: все сделки (командные + админские, но админские показываются как 2000₽)
       filteredDeals = deals;
     }
     
