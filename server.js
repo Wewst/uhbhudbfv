@@ -43,6 +43,42 @@ async function getConnectionConfig(url) {
       };
     }
     
+    // Обработка Supabase Pooler URL (уже правильный формат)
+    if (hostname.includes('pooler.supabase.com')) {
+      console.log(`✅ Обнаружен Supabase Pooler URL (IPv4 совместимый)`);
+      console.log(`   Hostname: ${hostname}`);
+      console.log(`   User: ${urlObj.username || 'postgres'}`);
+      
+      // Пробуем резолвить pooler в IPv4
+      return new Promise((resolve) => {
+        dns.lookup(hostname, { family: 4, all: false }, (err, address) => {
+          if (!err && address) {
+            console.log(`✅ DNS резолв Pooler: ${hostname} -> ${address} (IPv4)`);
+            resolve({
+              host: address,
+              port: parseInt(urlObj.port) || 5432,
+              database: urlObj.pathname.slice(1) || 'postgres',
+              user: urlObj.username || 'postgres',
+              password: urlObj.password,
+              ssl: { rejectUnauthorized: false, require: true }
+            });
+          } else {
+            console.error(`❌ Ошибка DNS lookup для pooler: ${err ? err.message : 'unknown'}`);
+            console.log(`⚠️ Пробуем использовать pooler hostname напрямую...`);
+            // Если не удалось резолвить, используем pooler hostname напрямую
+            resolve({
+              host: hostname,
+              port: parseInt(urlObj.port) || 5432,
+              database: urlObj.pathname.slice(1) || 'postgres',
+              user: urlObj.username || 'postgres',
+              password: urlObj.password,
+              ssl: { rejectUnauthorized: false, require: true }
+            });
+          }
+        });
+      });
+    }
+    
     // Автоматически преобразуем обычный Supabase URL в Session Pooler URL (IPv4 совместимый)
     // Если hostname начинается с db.xxx.supabase.co, преобразуем в pooler
     if (hostname.includes('db.') && hostname.includes('.supabase.co')) {
@@ -52,7 +88,7 @@ async function getConnectionConfig(url) {
         const poolerHostname = `aws-0-${projectRef[1]}.pooler.supabase.com`;
         const poolerUser = `${urlObj.username || 'postgres'}.${projectRef[1]}`;
         
-        console.log(`🔄 Обнаружен Supabase URL - преобразуем в Session Pooler (IPv4)`);
+        console.log(`🔄 Обнаружен обычный Supabase URL - преобразуем в Session Pooler (IPv4)`);
         console.log(`   Оригинальный: ${hostname}`);
         console.log(`   Pooler: ${poolerHostname}`);
         console.log(`   User: ${poolerUser}`);
@@ -143,7 +179,15 @@ async function initDatabase() {
     // Проверка формата строки подключения
     const dbUrl = process.env.DATABASE_URL;
     console.log('Проверка строки подключения...');
-    console.log('URL (без пароля):', dbUrl ? dbUrl.replace(/:[^:@]+@/, ':****@') : 'НЕ УСТАНОВЛЕНА!');
+    const maskedUrl = dbUrl ? dbUrl.replace(/:[^:@]+@/, ':****@') : 'НЕ УСТАНОВЛЕНА!';
+    console.log('URL (без пароля):', maskedUrl);
+    
+    // Определяем тип URL
+    if (dbUrl && dbUrl.includes('pooler.supabase.com')) {
+      console.log('✅ Обнаружен Pooler URL (IPv4 совместимый)');
+    } else if (dbUrl && dbUrl.includes('db.') && dbUrl.includes('.supabase.co')) {
+      console.log('⚠️ Обнаружен обычный Supabase URL - будет преобразован в Pooler');
+    }
     
     if (!dbUrl.startsWith('postgresql://') && !dbUrl.startsWith('postgres://')) {
       throw new Error('DATABASE_URL должна начинаться с postgresql:// или postgres://');
@@ -152,12 +196,12 @@ async function initDatabase() {
     // Проверка на IPv6 адрес в строке
     if (dbUrl.includes('2a05:') || dbUrl.match(/\[.*:.*\]/) || dbUrl.match(/[0-9a-f]{4}:[0-9a-f]{4}:/i)) {
       console.error('❌ ОШИБКА: Обнаружен IPv6 адрес в строке подключения!');
-      console.error('❌ Нужно использовать доменное имя db.xxxxx.supabase.co вместо IP адреса!');
-      throw new Error('Используется IPv6 адрес вместо доменного имени. Обновите DATABASE_URL в Render.');
+      console.error('❌ Нужно использовать Pooler URL: aws-0-xxx.pooler.supabase.com');
+      throw new Error('Используется IPv6 адрес. Используйте Pooler URL в Render.');
     }
     
     // Получаем конфигурацию подключения с IPv4 адресом
-    console.log('Резолв доменного имени в IPv4 адрес...');
+    console.log('Получение конфигурации подключения...');
     const connectionConfig = await getConnectionConfig(dbUrl);
     
     // Создаем pool с правильной конфигурацией
