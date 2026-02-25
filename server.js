@@ -223,20 +223,32 @@ app.post('/api/deals', async (req, res) => {
     const username = String(req.body.username || '').trim().replace(/^@/, '') || 'user';
     const usernameFormatted = username.startsWith('@') ? username : '@' + username;
     
+    console.log('Создание сделки для:', usernameFormatted);
+    
     const deals = loadDeals();
-    const now = new Date().getTime();
-    const duplicateWindow = 5000; // 5 секунд
+    const now = Date.now();
+    const duplicateWindow = 2000; // 2 секунды (уменьшено для теста)
     
     // Проверяем, не создана ли сделка с тем же username в последние 5 секунд
     const recentDeal = deals.find(deal => {
-      if (deal.username.toLowerCase() !== usernameFormatted.toLowerCase()) {
+      try {
+        if (!deal || !deal.username || !deal.date) return false;
+        const dealUsername = String(deal.username || '').toLowerCase().trim();
+        const newUsername = usernameFormatted.toLowerCase().trim();
+        if (dealUsername !== newUsername) return false;
+        
+        const dealTime = new Date(deal.date).getTime();
+        if (isNaN(dealTime)) return false;
+        const timeDiff = now - dealTime;
+        return timeDiff >= 0 && timeDiff < duplicateWindow;
+      } catch (e) {
+        console.error('Ошибка проверки дубликата:', e, deal);
         return false;
       }
-      const dealTime = new Date(deal.date).getTime();
-      return (now - dealTime) < duplicateWindow;
     });
     
     if (recentDeal) {
+      console.log('Дубликат найден, отклоняем запрос для:', usernameFormatted);
       return res.status(400).json({ 
         error: 'Сделка с этим пользователем уже создана недавно. Подождите несколько секунд.',
         duplicate: true
@@ -254,6 +266,7 @@ app.post('/api/deals', async (req, res) => {
     
     deals.push(newDeal);
     saveDeals(deals);
+    console.log('Сделка создана успешно:', id);
 
     // Отправляем уведомление в Telegram
     try {
