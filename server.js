@@ -673,6 +673,16 @@ function getTeamSumData(userId) {
         if (t >= todayStart) dayPersonal += dealAmount;
       }
     }
+    
+    // Добавляем выведенные бонусы в личный доход
+    if (userId) {
+      const users = loadUsers();
+      const userData = users[String(userId)];
+      if (userData && userData.withdrawnBonuses) {
+        totalPersonal += userData.withdrawnBonuses || 0;
+        // Бонусы не учитываются в месячных/дневных периодах, так как они выводятся раз в 15 дней
+      }
+    }
 
     return {
       totalAll,
@@ -1648,12 +1658,18 @@ app.get('/api/bonuses', (req, res) => {
     const lastWithdrawal = withdrawals[userIdStr];
     const withdrawnTaskIds = lastWithdrawal && lastWithdrawal.withdrawnTaskIds ? lastWithdrawal.withdrawnTaskIds : [];
     
-    // Подсчитываем общую сумму бонусов (только невыведенные)
+    // Подсчитываем общую сумму бонусов и список невыведенных заданий
     let totalBonus = 0;
+    const availableTasks = [];
     tasks.forEach(task => {
       // Проверяем, что задание подтверждено и не было выведено
       if (task.completedBy && task.completedBy.includes(userIdStr) && !withdrawnTaskIds.includes(task.id)) {
         totalBonus += task.reward || 0;
+        availableTasks.push({
+          id: task.id,
+          title: task.title,
+          reward: task.reward || 0
+        });
       }
     });
     const now = new Date();
@@ -1674,7 +1690,8 @@ app.get('/api/bonuses', (req, res) => {
       totalBonus: totalBonus,
       canWithdraw: canWithdraw,
       timeUntilNext: timeUntilNext, // дней до следующего вывода
-      lastWithdrawAt: lastWithdrawal ? lastWithdrawal.lastWithdrawAt : null
+      lastWithdrawAt: lastWithdrawal ? lastWithdrawal.lastWithdrawAt : null,
+      availableTasks: availableTasks // Список невыведенных заданий
     });
   } catch (error) {
     console.error('Ошибка получения информации о бонусах:', error);
@@ -1727,28 +1744,21 @@ app.post('/api/bonuses/withdraw', (req, res) => {
       return res.status(400).json({ error: 'Нет бонусов для вывода' });
     }
     
-    // Получаем данные пользователя для правильного отображения
+    // Получаем данные пользователя и добавляем бонусы в личный доход
     const users = loadUsers();
-    const userData = users[userIdStr];
+    if (!users[userIdStr]) {
+      users[userIdStr] = {
+        userId: userIdStr,
+        username: 'Пользователь',
+        avatar: null,
+        updatedAt: new Date().toISOString()
+      };
+    }
     
-    // Создаем сделку с типом "bonus" для добавления в личный доход
-    const deals = loadDeals();
-    const bonusDeal = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2),
-      username: 'Бонус',
-      amount: totalBonus,
-      date: new Date().toISOString(),
-      status: 'success', // Автоматически успешная
-      telegramMessageId: null,
-      appType: 'team',
-      userId: userIdStr,
-      avatar: userData ? userData.avatar : null,
-      createdBy: userData ? userData.username : 'Пользователь',
-      isBonus: true // Флаг, что это вывод бонусов
-    };
-    
-    deals.push(bonusDeal);
-  saveDeals(deals);
+    // Добавляем сумму бонусов в личный доход пользователя
+    users[userIdStr].withdrawnBonuses = (users[userIdStr].withdrawnBonuses || 0) + totalBonus;
+    users[userIdStr].updatedAt = new Date().toISOString();
+    saveUsers(users);
     
     // Сохраняем информацию о выводе (включая список выведенных заданий)
     const newWithdrawnTaskIds = [...(withdrawnTaskIds || []), ...taskIdsToWithdraw];
