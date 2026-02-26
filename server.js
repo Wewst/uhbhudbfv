@@ -855,11 +855,26 @@ app.get('/api/deals', (req, res) => {
 
 app.post('/api/deals', async (req, res) => {
   try {
+    console.log('📥 Получен запрос на создание сделки:', {
+      username: req.body.username,
+      appType: req.body.appType,
+      userId: req.body.userId,
+      avatar: req.body.avatar ? 'есть' : 'нет',
+      createdBy: req.body.createdBy
+    });
+    
   const username = String(req.body.username || '').trim().replace(/^@/, '') || 'user';
     const appType = req.body.appType || 'admin'; // 'admin' или 'team'
     const userId = req.body.userId || null; // ID пользователя Telegram
     const userAvatar = req.body.avatar || null; // Аватар пользователя
     const createdBy = req.body.createdBy || username; // Имя создателя
+    
+    console.log('📝 Обработанные данные:', {
+      username,
+      appType,
+      userId,
+      createdBy
+    });
     
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
     const usernameFormatted = username.startsWith('@') ? username : '@' + username;
@@ -881,7 +896,7 @@ app.post('/api/deals', async (req, res) => {
     };
     
     deals.push(newDeal);
-    saveDeals(deals);
+  saveDeals(deals);
 
     // Отправляем уведомление в Telegram и сохраняем message_id
     try {
@@ -928,7 +943,7 @@ app.post('/api/deals', async (req, res) => {
 
     // Возвращаем все сделки отсортированные по дате
     deals.sort((a, b) => new Date(b.date) - new Date(a.date));
-    res.json({ ok: true, deals });
+  res.json({ ok: true, deals });
   } catch (error) {
     console.error('Ошибка добавления сделки:', error);
     res.status(500).json({ error: 'Ошибка добавления сделки' });
