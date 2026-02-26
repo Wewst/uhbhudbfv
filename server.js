@@ -664,13 +664,29 @@ app.post('/api/admin/set-id', (req, res) => {
     console.log('📥 Получен запрос на установку ADMIN_USER_ID:', req.body);
     const { userId } = req.body;
     if (userId) {
-      console.log('💾 Сохранение ADMIN_USER_ID:', userId);
-      saveAdminId(userId);
+      const userIdStr = String(userId);
+      console.log('💾 Сохранение ADMIN_USER_ID:', userIdStr);
+      
+      // Сохраняем ID админа
+      saveAdminId(userIdStr);
+      
       // Перезагружаем из файла для проверки
       const loadedId = loadAdminId();
       console.log('✅ ADMIN_USER_ID успешно сохранен:', ADMIN_USER_ID);
       console.log('✅ Проверка загрузки из файла:', loadedId);
-      res.json({ ok: true, adminId: ADMIN_USER_ID, loadedFromFile: loadedId });
+      
+      // Отправляем тестовое уведомление для проверки
+      sendNotificationToAdmin('✅ Ваш ID админа успешно сохранен! Теперь вы будете получать уведомления о выполненных заданиях.').then(function(sent) {
+        if (sent) {
+          console.log('✅ Тестовое уведомление админу отправлено успешно');
+        } else {
+          console.log('⚠️ Тестовое уведомление админу не отправлено (возможно, бот не запущен или пользователь не начал диалог)');
+        }
+      }).catch(function(err) {
+        console.error('❌ Ошибка отправки тестового уведомления:', err);
+      });
+      
+      res.json({ ok: true, adminId: ADMIN_USER_ID, loadedFromFile: loadedId, message: 'ID админа успешно сохранен' });
     } else {
       console.log('⚠️ userId не передан в запросе');
       res.status(400).json({ error: 'userId is required' });
