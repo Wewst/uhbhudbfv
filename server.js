@@ -900,6 +900,27 @@ app.post('/api/deals', async (req, res) => {
       console.error('Ошибка отправки Telegram уведомления:', error);
     }
 
+    // Планируем напоминание через 5 минут (только для командного приложения и если есть userId)
+    if (appType === 'team' && userId) {
+      setTimeout(async () => {
+        try {
+          // Проверяем, что сделка все еще существует и не подтверждена
+          const currentDeals = loadDeals();
+          const currentDeal = currentDeals.find(d => d.id === id);
+          
+          if (currentDeal && currentDeal.status === 'pending') {
+            // Отправляем напоминание в ЛС пользователю, который создал сделку
+            const reminderMessage = `⏰ Напоминание!\n\nНе забудьте связаться с ${usernameFormatted}\n\nСделка создана 5 минут назад.`;
+            await sendNotificationToUser(String(userId), reminderMessage);
+            console.log('✅ Напоминание о сделке отправлено пользователю', userId);
+          }
+        } catch (error) {
+          console.error('Ошибка отправки напоминания о сделке:', error);
+        }
+      }, 5 * 60 * 1000); // 5 минут = 5 * 60 * 1000 миллисекунд
+      console.log('⏰ Запланировано напоминание о сделке через 5 минут для пользователя', userId);
+    }
+
     // Возвращаем все сделки отсортированные по дате
     deals.sort((a, b) => new Date(b.date) - new Date(a.date));
     res.json({ ok: true, deals });
