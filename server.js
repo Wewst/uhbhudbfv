@@ -192,7 +192,7 @@ function saveUsers(users) {
 }
 
 // Функция отправки уведомления пользователю через бота уведомлений
-// Функция отправки уведомления админу в ЛС
+// Функция отправки уведомления админу в ЛС через админского бота
 async function sendNotificationToAdmin(text) {
   // Перезагружаем ADMIN_USER_ID из файла на случай, если он был обновлен
   const currentAdminId = loadAdminId();
@@ -206,8 +206,85 @@ async function sendNotificationToAdmin(text) {
     return false;
   }
   
-  console.log('📤 Отправка уведомления админу в ЛС (userId:', ADMIN_USER_ID + '):', text.substring(0, 50) + '...');
-  return await sendNotificationToUser(ADMIN_USER_ID, text);
+  if (!text || typeof text !== 'string' || text.trim().length === 0) {
+    console.log('⚠️ Текст уведомления пустой, уведомление админу не отправлено');
+    return false;
+  }
+  
+  if (!TELEGRAM_BOT_TOKEN) {
+    console.error('❌ TELEGRAM_BOT_TOKEN не установлен');
+    return false;
+  }
+  
+  console.log('📤 Отправка уведомления админу в ЛС через админского бота (userId:', ADMIN_USER_ID + '):', text.substring(0, 50) + '...');
+  
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const data = JSON.stringify({
+    chat_id: String(ADMIN_USER_ID),
+    text: text.trim(),
+    parse_mode: 'HTML'
+  });
+
+  return new Promise((resolve) => {
+    const urlObj = new URL(url);
+    const options = {
+      hostname: urlObj.hostname,
+      port: 443,
+      path: urlObj.pathname + urlObj.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data, 'utf8')
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let responseData = '';
+      res.on('data', (chunk) => {
+        responseData += chunk;
+      });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try {
+            const response = JSON.parse(responseData);
+            if (response.ok) {
+              console.log('✅ Уведомление админу отправлено через админского бота');
+              resolve(true);
+            } else {
+              console.error('❌ Ошибка отправки уведомления админу (ответ не OK):', res.statusCode, responseData);
+              if (response.error_code === 403 || response.error_code === 400) {
+                console.error('💡 Админ не начал диалог с админским ботом. Нужно сначала написать боту /start');
+              }
+              resolve(false);
+            }
+          } catch (e) {
+            console.error('❌ Ошибка парсинга ответа:', responseData);
+            resolve(false);
+          }
+        } else {
+          console.error('❌ Ошибка отправки уведомления админу (HTTP):', res.statusCode, responseData);
+          try {
+            const errorResponse = JSON.parse(responseData);
+            if (errorResponse.error_code === 401) {
+              console.error('❌ Ошибка 401: Неверный токен админского бота или бот не существует');
+            } else if (errorResponse.error_code === 403) {
+              console.error('❌ Ошибка 403: Админ заблокировал админского бота или не начал диалог');
+              console.error('💡 Решение: Админ должен сначала написать админскому боту /start');
+            }
+          } catch (e) {}
+          resolve(false);
+        }
+      });
+    });
+
+    req.on('error', (error) => {
+      console.error('❌ Ошибка запроса к Telegram API для админа:', error);
+      resolve(false);
+    });
+
+    req.write(data);
+    req.end();
+  });
 }
 
 async function sendNotificationToUser(userId, text) {
