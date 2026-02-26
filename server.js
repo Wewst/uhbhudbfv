@@ -174,8 +174,15 @@ function saveUsers(users) {
 // Функция отправки уведомления пользователю через бота уведомлений
 // Функция отправки уведомления админу в ЛС
 async function sendNotificationToAdmin(text) {
+  // Перезагружаем ADMIN_USER_ID из файла на случай, если он был обновлен
+  const currentAdminId = loadAdminId();
+  if (currentAdminId) {
+    ADMIN_USER_ID = currentAdminId;
+  }
+  
   if (!ADMIN_USER_ID) {
     console.log('⚠️ ADMIN_USER_ID не установлен, уведомление админу не отправлено. Текст:', text);
+    console.log('💡 Подсказка: откройте админское приложение, чтобы ID админа был сохранен');
     return false;
   }
   
@@ -626,15 +633,19 @@ function checkLeaderboardChanges(currentLeaderboard) {
 // Endpoint для сохранения ID админа (вызывается из админского приложения при первом запросе)
 app.post('/api/admin/set-id', (req, res) => {
   try {
+    console.log('📥 Получен запрос на установку ADMIN_USER_ID:', req.body);
     const { userId } = req.body;
     if (userId) {
+      console.log('💾 Сохранение ADMIN_USER_ID:', userId);
       saveAdminId(userId);
+      console.log('✅ ADMIN_USER_ID успешно сохранен:', ADMIN_USER_ID);
       res.json({ ok: true, adminId: ADMIN_USER_ID });
     } else {
+      console.log('⚠️ userId не передан в запросе');
       res.status(400).json({ error: 'userId is required' });
     }
   } catch (error) {
-    console.error('Ошибка установки ADMIN_USER_ID:', error);
+    console.error('❌ Ошибка установки ADMIN_USER_ID:', error);
     res.status(500).json({ error: 'Ошибка установки ADMIN_USER_ID' });
   }
 });
