@@ -202,12 +202,19 @@ async function sendNotificationToUser(userId, text) {
     return false;
   }
   
+  if (!NOTIFICATION_BOT_TOKEN) {
+    console.error('❌ NOTIFICATION_BOT_TOKEN не установлен');
+    return false;
+  }
+  
   const url = `https://api.telegram.org/bot${NOTIFICATION_BOT_TOKEN}/sendMessage`;
   const data = JSON.stringify({
     chat_id: String(userId),
     text: text.trim(),
     parse_mode: 'HTML'
   });
+
+  console.log('📤 Попытка отправки уведомления пользователю', userId, 'через бота', NOTIFICATION_BOT_TOKEN.substring(0, 10) + '...');
 
   return new Promise((resolve) => {
     const urlObj = new URL(url);
@@ -235,7 +242,11 @@ async function sendNotificationToUser(userId, text) {
               console.log('✅ Уведомление отправлено пользователю', userId);
               resolve(true);
             } else {
-              console.error('❌ Ошибка отправки уведомления:', res.statusCode, responseData);
+              console.error('❌ Ошибка отправки уведомления (ответ не OK):', res.statusCode, responseData);
+              // Если ошибка 403 или 400 - пользователь не начал диалог с ботом
+              if (response.error_code === 403 || response.error_code === 400) {
+                console.error('💡 Пользователь не начал диалог с ботом. Нужно сначала написать боту /start');
+              }
               resolve(false);
             }
           } catch (e) {
@@ -243,7 +254,16 @@ async function sendNotificationToUser(userId, text) {
             resolve(false);
           }
         } else {
-          console.error('❌ Ошибка отправки уведомления:', res.statusCode, responseData);
+          console.error('❌ Ошибка отправки уведомления (HTTP):', res.statusCode, responseData);
+          try {
+            const errorResponse = JSON.parse(responseData);
+            if (errorResponse.error_code === 401) {
+              console.error('❌ Ошибка 401: Неверный токен бота или бот не существует');
+            } else if (errorResponse.error_code === 403) {
+              console.error('❌ Ошибка 403: Пользователь заблокировал бота или не начал диалог');
+              console.error('💡 Решение: Пользователь должен сначала написать боту /start');
+            }
+          } catch (e) {}
           resolve(false);
         }
       });
@@ -385,6 +405,14 @@ async function deleteTelegramMessage(messageId) {
 
 app.use(cors());
 app.use(express.json());
+
+// Логирование всех запросов для отладки
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/admin/')) {
+    console.log('📥 Запрос:', req.method, req.path, 'Body:', JSON.stringify(req.body));
+  }
+  next();
+});
 
 function startOfDay(d) {
   const x = new Date(d);
