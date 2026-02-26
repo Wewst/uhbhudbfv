@@ -428,9 +428,8 @@ app.use(express.json());
 
 // Логирование всех запросов для отладки
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/admin/')) {
+  if (req.path.startsWith('/api/admin/') || req.path === '/api/users') {
     console.log('📥 Запрос:', req.method, req.path);
-    console.log('📥 Headers:', JSON.stringify(req.headers));
     console.log('📥 Body:', JSON.stringify(req.body));
     console.log('📥 Query:', JSON.stringify(req.query));
   }
@@ -1006,22 +1005,35 @@ app.get('/api/leaderboard', (req, res) => {
 app.post('/api/users', (req, res) => {
   try {
     const { userId, username, avatar } = req.body;
+    console.log('📥 Получен запрос на сохранение пользователя:', { userId, username });
+    
     if (!userId) {
+      console.log('⚠️ userId не передан в запросе');
       return res.status(400).json({ error: 'userId is required' });
     }
     
     const users = loadUsers();
-    users[String(userId)] = {
-      userId: String(userId),
+    const userIdStr = String(userId);
+    users[userIdStr] = {
+      userId: userIdStr,
       username: username || 'Пользователь',
       avatar: avatar || null,
       updatedAt: new Date().toISOString()
     };
     saveUsers(users);
     
+    console.log('✅ Пользователь сохранен:', userIdStr, username);
+    
+    // Если это админ (проверяем по первому сохраненному пользователю или по специальному признаку)
+    // Автоматически сохраняем ID админа, если он еще не сохранен
+    if (!ADMIN_USER_ID) {
+      console.log('💡 ADMIN_USER_ID не установлен, пытаемся установить из сохраненного пользователя:', userIdStr);
+      saveAdminId(userIdStr);
+    }
+    
     res.json({ ok: true });
   } catch (error) {
-    console.error('Ошибка сохранения пользователя:', error);
+    console.error('❌ Ошибка сохранения пользователя:', error);
     res.status(500).json({ error: 'Ошибка сохранения пользователя' });
   }
 });
