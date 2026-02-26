@@ -904,7 +904,10 @@ app.post('/api/deals', async (req, res) => {
     // Отправляем уведомление в Telegram и сохраняем message_id
     try {
       const creatorInfo = createdBy && createdBy !== username ? ` (провел: ${createdBy})` : '';
-      const messageId = await sendTelegramMessage(`Сделка создалась ${usernameFormatted}${creatorInfo}`);
+      const dealDate = new Date();
+      const dateStr = dealDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+      const timeStr = dealDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      const messageId = await sendTelegramMessage(`Сделка создалась ${usernameFormatted}${creatorInfo}\nДата: ${dateStr} ${timeStr}`);
       if (messageId) {
         newDeal.telegramMessageId = messageId;
         // Обновляем сделку с message_id
@@ -1000,9 +1003,12 @@ app.patch('/api/deals/:id', async (req, res) => {
         // Отправляем новое сообщение о статусе
         const username = deal.username || 'неизвестный';
         const creatorInfo = deal.createdBy && deal.createdBy !== username.replace('@', '') ? ` (провел: ${deal.createdBy})` : '';
+        const dealDate = deal.date ? new Date(deal.date) : new Date();
+        const dateStr = dealDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        const timeStr = dealDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
         const messageText = status === 'success' 
-          ? `Сделка успешна ${username}${creatorInfo}` 
-          : `Сделка провалена ${username}${creatorInfo}`;
+          ? `Сделка успешна ${username}${creatorInfo}\nДата: ${dateStr} ${timeStr}` 
+          : `Сделка провалена ${username}${creatorInfo}\nДата: ${dateStr} ${timeStr}`;
         const newMessageId = await sendTelegramMessage(messageText);
         
         // Сохраняем новый message_id
@@ -1046,12 +1052,15 @@ app.delete('/api/deals/:id', async (req, res) => {
     
     const username = deal.username || 'неизвестный';
     const creatorInfo = deal.createdBy && deal.createdBy !== username.replace('@', '') ? ` (провел: ${deal.createdBy})` : '';
+    const dealDate = deal.date ? new Date(deal.date) : new Date();
+    const dateStr = dealDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const timeStr = dealDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
     deals.splice(dealIndex, 1);
     saveDeals(deals);
 
     // Отправляем уведомление в Telegram
     try {
-      await sendTelegramMessage(`Сделка удалена ${username}${creatorInfo}`);
+      await sendTelegramMessage(`Сделка удалена ${username}${creatorInfo}\nДата: ${dateStr} ${timeStr}`);
     } catch (error) {
       console.error('Ошибка отправки Telegram уведомления:', error);
     }
@@ -1095,22 +1104,18 @@ app.get('/api/team/sum', (req, res) => {
   }
 });
 
-// Получение сделок для командного приложения (с фильтрацией)
+// Получение сделок для командного приложения (только личные сделки)
 app.get('/api/team/deals', (req, res) => {
   try {
     const userId = req.query.userId || null;
-    const filter = req.query.filter || 'all'; // 'all', 'personal'
-  const deals = loadDeals();
+    const filter = req.query.filter || 'personal'; // Теперь всегда 'personal'
+    const deals = loadDeals();
     
     let filteredDeals = [];
     
-    // Фильтруем по типу
-    if (filter === 'personal' && userId) {
-      // Личные: только сделки конкретного пользователя (все статусы)
+    // Фильтруем: только личные сделки конкретного пользователя (все статусы)
+    if (userId) {
       filteredDeals = deals.filter(d => d.userId && String(d.userId) === String(userId));
-    } else if (filter === 'all') {
-      // Общие: только успешные сделки (status === 'success')
-      filteredDeals = deals.filter(d => d.status === 'success');
     }
     
     // Сортируем по дате (новые сверху)
