@@ -638,8 +638,11 @@ app.post('/api/admin/set-id', (req, res) => {
     if (userId) {
       console.log('💾 Сохранение ADMIN_USER_ID:', userId);
       saveAdminId(userId);
+      // Перезагружаем из файла для проверки
+      const loadedId = loadAdminId();
       console.log('✅ ADMIN_USER_ID успешно сохранен:', ADMIN_USER_ID);
-      res.json({ ok: true, adminId: ADMIN_USER_ID });
+      console.log('✅ Проверка загрузки из файла:', loadedId);
+      res.json({ ok: true, adminId: ADMIN_USER_ID, loadedFromFile: loadedId });
     } else {
       console.log('⚠️ userId не передан в запросе');
       res.status(400).json({ error: 'userId is required' });
@@ -650,10 +653,31 @@ app.post('/api/admin/set-id', (req, res) => {
   }
 });
 
+// Endpoint для проверки текущего ADMIN_USER_ID
+app.get('/api/admin/check-id', (req, res) => {
+  try {
+    // Перезагружаем из файла на случай, если он был обновлен
+    const loadedId = loadAdminId();
+    if (loadedId) {
+      ADMIN_USER_ID = loadedId;
+    }
+    res.json({ 
+      ok: true, 
+      adminId: ADMIN_USER_ID,
+      isSet: !!ADMIN_USER_ID,
+      fileExists: fs.existsSync(adminIdFile)
+    });
+  } catch (error) {
+    console.error('❌ Ошибка проверки ADMIN_USER_ID:', error);
+    res.status(500).json({ error: 'Ошибка проверки ADMIN_USER_ID' });
+  }
+});
+
 app.get('/api/sum', (req, res) => {
   // Сохраняем ID админа из запроса (если есть и еще не установлен)
   const adminId = req.query.adminId || req.headers['x-admin-id'];
   if (adminId && !ADMIN_USER_ID) {
+    console.log('💾 Установка ADMIN_USER_ID через /api/sum:', adminId);
     saveAdminId(adminId);
   }
   res.json(getSumData());
