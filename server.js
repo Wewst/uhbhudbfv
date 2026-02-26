@@ -659,8 +659,8 @@ function getTeamSumData(userId) {
         dealAmount = DEAL_AMOUNT_TEAM;
       }
       
-      // Общая сумма (только успешные сделки)
-      if (d.status === 'success') {
+      // Общая сумма (только успешные сделки, исключая бонусы)
+      if (d.status === 'success' && !d.isBonus) {
         totalAll += dealAmount;
         if (t >= monthStart) monthAll += dealAmount;
         if (t >= todayStart) dayAll += dealAmount;
@@ -696,17 +696,20 @@ function getLeaderboard() {
   try {
     const deals = loadDeals();
     const tasks = loadTasks();
+    const users = loadUsers(); // Загружаем данные пользователей
     const userStats = {};
     
-    // Подсчитываем только успешные сделки
+    // Подсчитываем только успешные сделки (исключая бонусы)
     for (const d of deals) {
-      if (d.status === 'success' && d.userId) {
+      if (d.status === 'success' && d.userId && !d.isBonus) {
         const userId = String(d.userId);
         if (!userStats[userId]) {
+          // Используем данные из users.json, если они есть
+          const userData = users[userId];
           userStats[userId] = {
             userId: d.userId,
-            username: d.createdBy || d.username || 'Неизвестный',
-            avatar: d.avatar || null,
+            username: userData ? userData.username : (d.createdBy || d.username || 'Неизвестный'),
+            avatar: userData ? userData.avatar : (d.avatar || null),
             dealsCount: 0,
             tasksCount: 0,
             totalAmount: 0
@@ -724,11 +727,12 @@ function getLeaderboard() {
         for (const userId of task.completedBy) {
           const userIdStr = String(userId);
           if (!userStats[userIdStr]) {
-            // Если пользователя нет в статистике, создаем запись
+            // Используем данные из users.json, если они есть
+            const userData = users[userIdStr];
             userStats[userIdStr] = {
               userId: userId,
-              username: 'Пользователь',
-              avatar: null,
+              username: userData ? userData.username : 'Пользователь',
+              avatar: userData ? userData.avatar : null,
               dealsCount: 0,
               tasksCount: 0,
               totalAmount: 0
@@ -1640,16 +1644,18 @@ app.get('/api/bonuses', (req, res) => {
     const withdrawals = loadBonusWithdrawals();
     const userIdStr = String(userId);
     
-    // Подсчитываем общую сумму бонусов
+    // Проверяем последний вывод
+    const lastWithdrawal = withdrawals[userIdStr];
+    const withdrawnTaskIds = lastWithdrawal && lastWithdrawal.withdrawnTaskIds ? lastWithdrawal.withdrawnTaskIds : [];
+    
+    // Подсчитываем общую сумму бонусов (только невыведенные)
     let totalBonus = 0;
     tasks.forEach(task => {
-      if (task.completedBy && task.completedBy.includes(userIdStr)) {
+      // Проверяем, что задание подтверждено и не было выведено
+      if (task.completedBy && task.completedBy.includes(userIdStr) && !withdrawnTaskIds.includes(task.id)) {
         totalBonus += task.reward || 0;
       }
     });
-    
-    // Проверяем последний вывод
-    const lastWithdrawal = withdrawals[userIdStr];
     const now = new Date();
     let canWithdraw = true;
     let timeUntilNext = 0;
@@ -1688,18 +1694,6 @@ app.post('/api/bonuses/withdraw', (req, res) => {
     const withdrawals = loadBonusWithdrawals();
     const userIdStr = String(userId);
     
-    // Подсчитываем общую сумму бонусов
-    let totalBonus = 0;
-    tasks.forEach(task => {
-      if (task.completedBy && task.completedBy.includes(userIdStr)) {
-        totalBonus += task.reward || 0;
-      }
-    });
-    
-    if (totalBonus === 0) {
-      return res.status(400).json({ error: 'Нет бонусов для вывода' });
-    }
-    
     // Проверяем последний вывод
     const lastWithdrawal = withdrawals[userIdStr];
     const now = new Date();
@@ -1716,6 +1710,27 @@ app.post('/api/bonuses/withdraw', (req, res) => {
       }
     }
     
+    // Подсчитываем общую сумму бонусов (только невыведенные)
+    const withdrawnTaskIds = lastWithdrawal && lastWithdrawal.withdrawnTaskIds ? lastWithdrawal.withdrawnTaskIds : [];
+    
+    let totalBonus = 0;
+    const taskIdsToWithdraw = [];
+    tasks.forEach(task => {
+      // Проверяем, что задание подтверждено и не было выведено
+      if (task.completedBy && task.completedBy.includes(userIdStr) && !withdrawnTaskIds.includes(task.id)) {
+        totalBonus += task.reward || 0;
+        taskIdsToWithdraw.push(task.id);
+      }
+    });
+    
+    if (totalBonus === 0) {
+      return res.status(400).json({ error: 'Нет бонусов для вывода' });
+    }
+    
+    // Получаем данные пользователя для правильного отображения
+    const users = loadUsers();
+    const userData = users[userIdStr];
+    
     // Создаем сделку с типом "bonus" для добавления в личный доход
     const deals = loadDeals();
     const bonusDeal = {
@@ -1727,19 +1742,21 @@ app.post('/api/bonuses/withdraw', (req, res) => {
       telegramMessageId: null,
       appType: 'team',
       userId: userIdStr,
-      avatar: null,
-      createdBy: 'Система',
+      avatar: userData ? userData.avatar : null,
+      createdBy: userData ? userData.username : 'Пользователь',
       isBonus: true // Флаг, что это вывод бонусов
     };
     
     deals.push(bonusDeal);
   saveDeals(deals);
     
-    // Сохраняем информацию о выводе
+    // Сохраняем информацию о выводе (включая список выведенных заданий)
+    const newWithdrawnTaskIds = [...(withdrawnTaskIds || []), ...taskIdsToWithdraw];
     withdrawals[userIdStr] = {
       userId: userIdStr,
       lastWithdrawAt: now.toISOString(),
-      amount: totalBonus
+      amount: totalBonus,
+      withdrawnTaskIds: newWithdrawnTaskIds // Сохраняем список выведенных заданий
     };
     saveBonusWithdrawals(withdrawals);
     
