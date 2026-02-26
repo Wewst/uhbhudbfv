@@ -882,6 +882,8 @@ app.post('/api/deals', async (req, res) => {
     const dealAmount = appType === 'admin' ? DEAL_AMOUNT_ADMIN : DEAL_AMOUNT_TEAM;
     
     const deals = loadDeals();
+    // Сохраняем link, если он передан
+    const dealLink = req.body.link || null;
     const newDeal = {
       id,
       username: usernameFormatted,
@@ -892,7 +894,8 @@ app.post('/api/deals', async (req, res) => {
       appType: appType,
       userId: userId,
       avatar: userAvatar,
-      createdBy: createdBy
+      createdBy: createdBy,
+      link: dealLink // Сохраняем ссылку для напоминания
     };
     
     deals.push(newDeal);
@@ -915,8 +918,11 @@ app.post('/api/deals', async (req, res) => {
       console.error('Ошибка отправки Telegram уведомления:', error);
     }
 
-    // Планируем напоминание через 5 минут (для всех приложений, если есть userId)
-    if (userId) {
+    // Планируем напоминание через 5 минут (для всех приложений)
+    // Если userId не передан, но это админское приложение - используем ADMIN_USER_ID
+    const targetUserId = userId || (appType === 'admin' ? ADMIN_USER_ID : null);
+    
+    if (targetUserId) {
       setTimeout(async () => {
         try {
           // Проверяем, что сделка все еще существует (независимо от статуса)
@@ -926,9 +932,14 @@ app.post('/api/deals', async (req, res) => {
           if (currentDeal) {
             // Отправляем напоминание в ЛС пользователю, который создал сделку
             // Напоминание приходит независимо от статуса сделки (успешна или провалена)
-            const reminderMessage = `⏰ Напоминание!\n\nНе забудьте связаться с ${usernameFormatted}\n\nСделка создана 5 минут назад.`;
-            await sendNotificationToUser(String(userId), reminderMessage);
-            console.log('✅ Напоминание о сделке отправлено пользователю', userId, 'для сделки', id);
+            const linkInfo = currentDeal.link ? `\n\nСсылка: ${currentDeal.link}` : '';
+            const reminderMessage = `⏰ Напоминание!\n\nНе забудьте связаться с ${usernameFormatted}${linkInfo}\n\nСделка создана 5 минут назад.`;
+            
+            // Для админского приложения используем TELEGRAM_BOT_TOKEN (админский бот)
+            // Для командного приложения используем NOTIFICATION_BOT_TOKEN (общий бот)
+            const botToken = appType === 'admin' ? TELEGRAM_BOT_TOKEN : NOTIFICATION_BOT_TOKEN;
+            await sendNotificationToUser(String(targetUserId), reminderMessage, botToken);
+            console.log('✅ Напоминание о сделке отправлено пользователю', targetUserId, 'для сделки', id, 'через бот', appType === 'admin' ? 'админский' : 'общий');
           } else {
             console.log('⚠️ Сделка', id, 'не найдена, напоминание не отправлено (возможно, сделка была удалена)');
           }
@@ -936,9 +947,9 @@ app.post('/api/deals', async (req, res) => {
           console.error('❌ Ошибка отправки напоминания о сделке:', error);
         }
       }, 5 * 60 * 1000); // 5 минут = 5 * 60 * 1000 миллисекунд
-      console.log('⏰ Запланировано напоминание о сделке через 5 минут для пользователя', userId, 'сделка:', id);
+      console.log('⏰ Запланировано напоминание о сделке через 5 минут для пользователя', targetUserId, 'сделка:', id, 'appType:', appType);
     } else {
-      console.log('⚠️ userId не указан, напоминание не будет отправлено для сделки', id);
+      console.log('⚠️ userId не указан и ADMIN_USER_ID не установлен, напоминание не будет отправлено для сделки', id);
     }
 
     // Возвращаем все сделки отсортированные по дате
