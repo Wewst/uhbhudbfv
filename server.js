@@ -14,7 +14,7 @@ const TELEGRAM_BOT_TOKEN = '7840364464:AAEuBsIUKTnWxCnTaX0jn9WUMC5c4rp2nEk';
 // Группа, куда всегда отправляем сообщения (только для сделок)
 const TELEGRAM_CHAT_ID = '-5240130674';
 // Бот для уведомлений о первенстве
-const NOTIFICATION_BOT_TOKEN = '8671998094:AAEyg-2G8cHIoTQT3gCjm1X5QiyW31D4WQ';
+const NOTIFICATION_BOT_TOKEN = '8671998094:AAEyg-2G8cHIoTQT3gCjm1X5QiyW31D4WQo';
 // ID админа для отправки уведомлений в ЛС (загружается из файла при запуске)
 let ADMIN_USER_ID = null;
 
