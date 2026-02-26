@@ -36,15 +36,23 @@ function ensureDataDir() {
 // Загрузка ID админа из файла
 function loadAdminId() {
   ensureDataDir();
+  console.log('🔍 Попытка загрузки ADMIN_USER_ID из файла:', adminIdFile);
+  console.log('🔍 Файл существует?', fs.existsSync(adminIdFile));
+  
   if (!fs.existsSync(adminIdFile)) {
+    console.log('⚠️ Файл adminId.json не существует');
     return null;
   }
   try {
     const data = fs.readFileSync(adminIdFile, 'utf8');
+    console.log('📄 Содержимое файла adminId.json:', data);
     const adminData = JSON.parse(data);
-    return adminData.userId || null;
+    const userId = adminData.userId || null;
+    console.log('✅ ADMIN_USER_ID загружен из файла:', userId);
+    return userId;
   } catch (error) {
-    console.error('Ошибка чтения файла adminId.json:', error);
+    console.error('❌ Ошибка чтения файла adminId.json:', error);
+    console.error('❌ Детали ошибки:', error.message, error.stack);
     return null;
   }
 }
@@ -53,11 +61,23 @@ function loadAdminId() {
 function saveAdminId(userId) {
   ensureDataDir();
   try {
-    fs.writeFileSync(adminIdFile, JSON.stringify({ userId: String(userId) }, null, 2), 'utf8');
-    ADMIN_USER_ID = String(userId);
-    console.log('✅ ADMIN_USER_ID сохранен:', ADMIN_USER_ID);
+    const userIdStr = String(userId);
+    const data = { userId: userIdStr, savedAt: new Date().toISOString() };
+    fs.writeFileSync(adminIdFile, JSON.stringify(data, null, 2), 'utf8');
+    ADMIN_USER_ID = userIdStr;
+    console.log('✅ ADMIN_USER_ID сохранен в файл:', ADMIN_USER_ID);
+    console.log('📁 Путь к файлу:', adminIdFile);
+    
+    // Проверяем, что файл действительно создан
+    if (fs.existsSync(adminIdFile)) {
+      const fileContent = fs.readFileSync(adminIdFile, 'utf8');
+      console.log('✅ Файл adminId.json создан, содержимое:', fileContent);
+    } else {
+      console.error('❌ Файл adminId.json не был создан!');
+    }
   } catch (error) {
-    console.error('Ошибка записи файла adminId.json:', error);
+    console.error('❌ Ошибка записи файла adminId.json:', error);
+    console.error('❌ Детали ошибки:', error.message, error.stack);
   }
 }
 
@@ -409,7 +429,10 @@ app.use(express.json());
 // Логирование всех запросов для отладки
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/admin/')) {
-    console.log('📥 Запрос:', req.method, req.path, 'Body:', JSON.stringify(req.body));
+    console.log('📥 Запрос:', req.method, req.path);
+    console.log('📥 Headers:', JSON.stringify(req.headers));
+    console.log('📥 Body:', JSON.stringify(req.body));
+    console.log('📥 Query:', JSON.stringify(req.query));
   }
   next();
 });
@@ -700,16 +723,31 @@ app.post('/api/admin/set-id', (req, res) => {
 // Endpoint для проверки текущего ADMIN_USER_ID
 app.get('/api/admin/check-id', (req, res) => {
   try {
+    console.log('🔍 Проверка статуса ADMIN_USER_ID...');
     // Перезагружаем из файла на случай, если он был обновлен
     const loadedId = loadAdminId();
     if (loadedId) {
       ADMIN_USER_ID = loadedId;
+      console.log('✅ ADMIN_USER_ID обновлен из файла:', ADMIN_USER_ID);
     }
+    
+    const fileExists = fs.existsSync(adminIdFile);
+    console.log('📁 Файл adminId.json существует?', fileExists);
+    if (fileExists) {
+      try {
+        const fileContent = fs.readFileSync(adminIdFile, 'utf8');
+        console.log('📄 Содержимое файла:', fileContent);
+      } catch (e) {
+        console.error('❌ Ошибка чтения файла для проверки:', e);
+      }
+    }
+    
     res.json({ 
       ok: true, 
       adminId: ADMIN_USER_ID,
       isSet: !!ADMIN_USER_ID,
-      fileExists: fs.existsSync(adminIdFile)
+      fileExists: fileExists,
+      loadedFromFile: loadedId
     });
   } catch (error) {
     console.error('❌ Ошибка проверки ADMIN_USER_ID:', error);
