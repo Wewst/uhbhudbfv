@@ -855,7 +855,7 @@ app.get('/api/deals', (req, res) => {
 
 app.post('/api/deals', async (req, res) => {
   try {
-    const username = String(req.body.username || '').trim().replace(/^@/, '') || 'user';
+  const username = String(req.body.username || '').trim().replace(/^@/, '') || 'user';
     const appType = req.body.appType || 'admin'; // 'admin' или 'team'
     const userId = req.body.userId || null; // ID пользователя Telegram
     const userAvatar = req.body.avatar || null; // Аватар пользователя
@@ -885,7 +885,8 @@ app.post('/api/deals', async (req, res) => {
 
     // Отправляем уведомление в Telegram и сохраняем message_id
     try {
-      const messageId = await sendTelegramMessage(`Сделка создалась ${usernameFormatted}`);
+      const creatorInfo = createdBy && createdBy !== username ? ` (провел: ${createdBy})` : '';
+      const messageId = await sendTelegramMessage(`Сделка создалась ${usernameFormatted}${creatorInfo}`);
       if (messageId) {
         newDeal.telegramMessageId = messageId;
         // Обновляем сделку с message_id
@@ -946,9 +947,10 @@ app.patch('/api/deals/:id', async (req, res) => {
         
         // Отправляем новое сообщение о статусе
         const username = deal.username || 'неизвестный';
+        const creatorInfo = deal.createdBy && deal.createdBy !== username.replace('@', '') ? ` (провел: ${deal.createdBy})` : '';
         const messageText = status === 'success' 
-          ? `Сделка успешна ${username}` 
-          : `Сделка провалена ${username}`;
+          ? `Сделка успешна ${username}${creatorInfo}` 
+          : `Сделка провалена ${username}${creatorInfo}`;
         const newMessageId = await sendTelegramMessage(messageText);
         
         // Сохраняем новый message_id
@@ -991,12 +993,13 @@ app.delete('/api/deals/:id', async (req, res) => {
     }
     
     const username = deal.username || 'неизвестный';
+    const creatorInfo = deal.createdBy && deal.createdBy !== username.replace('@', '') ? ` (провел: ${deal.createdBy})` : '';
     deals.splice(dealIndex, 1);
     saveDeals(deals);
 
     // Отправляем уведомление в Telegram
     try {
-      await sendTelegramMessage(`Сделка удалена ${username}`);
+      await sendTelegramMessage(`Сделка удалена ${username}${creatorInfo}`);
     } catch (error) {
       console.error('Ошибка отправки Telegram уведомления:', error);
     }
@@ -1045,7 +1048,7 @@ app.get('/api/team/deals', (req, res) => {
   try {
     const userId = req.query.userId || null;
     const filter = req.query.filter || 'all'; // 'all', 'personal'
-    const deals = loadDeals();
+  const deals = loadDeals();
     
     let filteredDeals = [];
     
@@ -1256,7 +1259,7 @@ app.post('/api/tasks', async (req, res) => {
     
     const tasks = loadTasks();
     const newTask = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2),
       title,
       description,
       reward: Number(reward) || 0,
