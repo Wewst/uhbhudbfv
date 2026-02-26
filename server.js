@@ -25,6 +25,7 @@ const tasksFile = path.join(dataDir, 'tasks.json'); // Файл для зада�
 const goalsFile = path.join(dataDir, 'goals.json'); // Файл для целей
 const usersFile = path.join(dataDir, 'users.json'); // Файл для хранения данных пользователей (для уведомлений)
 const adminIdFile = path.join(dataDir, 'adminId.json'); // Файл для хранения ID админа
+const bonusWithdrawalsFile = path.join(dataDir, 'bonusWithdrawals.json'); // Файл для хранения информации о выводах бонусов
 
 // Создание папки data если её нет
 function ensureDataDir() {
@@ -187,6 +188,32 @@ function saveUsers(users) {
     fs.writeFileSync(usersFile, JSON.stringify(users, null, 2), 'utf8');
   } catch (error) {
     console.error('Ошибка записи файла users.json:', error);
+    throw error;
+  }
+}
+
+// Загрузка информации о выводах бонусов
+function loadBonusWithdrawals() {
+  ensureDataDir();
+  if (!fs.existsSync(bonusWithdrawalsFile)) {
+    return {};
+  }
+  try {
+    const data = fs.readFileSync(bonusWithdrawalsFile, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error('Ошибка чтения файла bonusWithdrawals.json:', error);
+    return {};
+  }
+}
+
+// Сохранение информации о выводах бонусов
+function saveBonusWithdrawals(withdrawals) {
+  ensureDataDir();
+  try {
+    fs.writeFileSync(bonusWithdrawalsFile, JSON.stringify(withdrawals, null, 2), 'utf8');
+  } catch (error) {
+    console.error('Ошибка записи файла bonusWithdrawals.json:', error);
     throw error;
   }
 }
@@ -881,7 +908,7 @@ app.post('/api/deals', async (req, res) => {
     
     const dealAmount = appType === 'admin' ? DEAL_AMOUNT_ADMIN : DEAL_AMOUNT_TEAM;
     
-    const deals = loadDeals();
+  const deals = loadDeals();
     // Сохраняем link, если он передан
     const dealLink = req.body.link || null;
     const newDeal = {
@@ -905,9 +932,11 @@ app.post('/api/deals', async (req, res) => {
     try {
       const creatorInfo = createdBy && createdBy !== username ? ` (провел: ${createdBy})` : '';
       const dealDate = new Date();
-      const dateStr = dealDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
-      const timeStr = dealDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-      const messageId = await sendTelegramMessage(`Сделка создалась ${usernameFormatted}${creatorInfo}\nДата: ${dateStr} ${timeStr}`);
+      const day = String(dealDate.getDate()).padStart(2, '0');
+      const month = String(dealDate.getMonth() + 1).padStart(2, '0');
+      const year = String(dealDate.getFullYear()).slice(-2);
+      const dateStr = day + '.' + month + '.' + year;
+      const messageId = await sendTelegramMessage(`Сделка создалась ${usernameFormatted}${creatorInfo}\nДата: ${dateStr}`);
       if (messageId) {
         newDeal.telegramMessageId = messageId;
         // Обновляем сделку с message_id
@@ -936,7 +965,7 @@ app.post('/api/deals', async (req, res) => {
             // Отправляем напоминание в ЛС пользователю, который создал сделку
             // Напоминание приходит независимо от статуса сделки (успешна или провалена)
             const linkInfo = currentDeal.link ? `\n\nСсылка: ${currentDeal.link}` : '';
-            const reminderMessage = `⏰ Напоминание!\n\nНе забудьте связаться с ${usernameFormatted}${linkInfo}\n\nСделка создана 5 минут назад.`;
+            const reminderMessage = `⏰ Напоминание!\n\nНе забудьте связаться с ${usernameFormatted}${linkInfo}\n\nСделка создана 5 дней назад.`;
             
             // Для админского приложения используем TELEGRAM_BOT_TOKEN (админский бот)
             // Для командного приложения используем NOTIFICATION_BOT_TOKEN (общий бот)
@@ -949,8 +978,8 @@ app.post('/api/deals', async (req, res) => {
         } catch (error) {
           console.error('❌ Ошибка отправки напоминания о сделке:', error);
         }
-      }, 5 * 60 * 1000); // 5 минут = 5 * 60 * 1000 миллисекунд
-      console.log('⏰ Запланировано напоминание о сделке через 5 минут для пользователя', targetUserId, 'сделка:', id, 'appType:', appType);
+      }, 5 * 24 * 60 * 60 * 1000); // 5 дней = 5 * 24 * 60 * 60 * 1000 миллисекунд
+      console.log('⏰ Запланировано напоминание о сделке через 5 дней для пользователя', targetUserId, 'сделка:', id, 'appType:', appType);
     } else {
       console.log('⚠️ userId не указан и ADMIN_USER_ID не установлен, напоминание не будет отправлено для сделки', id);
     }
@@ -1004,11 +1033,13 @@ app.patch('/api/deals/:id', async (req, res) => {
         const username = deal.username || 'неизвестный';
         const creatorInfo = deal.createdBy && deal.createdBy !== username.replace('@', '') ? ` (провел: ${deal.createdBy})` : '';
         const dealDate = deal.date ? new Date(deal.date) : new Date();
-        const dateStr = dealDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
-        const timeStr = dealDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+        const day = String(dealDate.getDate()).padStart(2, '0');
+        const month = String(dealDate.getMonth() + 1).padStart(2, '0');
+        const year = String(dealDate.getFullYear()).slice(-2);
+        const dateStr = day + '.' + month + '.' + year;
         const messageText = status === 'success' 
-          ? `Сделка успешна ${username}${creatorInfo}\nДата: ${dateStr} ${timeStr}` 
-          : `Сделка провалена ${username}${creatorInfo}\nДата: ${dateStr} ${timeStr}`;
+          ? `Сделка успешна ${username}${creatorInfo}\nДата: ${dateStr}` 
+          : `Сделка провалена ${username}${creatorInfo}\nДата: ${dateStr}`;
         const newMessageId = await sendTelegramMessage(messageText);
         
         // Сохраняем новый message_id
@@ -1053,14 +1084,16 @@ app.delete('/api/deals/:id', async (req, res) => {
     const username = deal.username || 'неизвестный';
     const creatorInfo = deal.createdBy && deal.createdBy !== username.replace('@', '') ? ` (провел: ${deal.createdBy})` : '';
     const dealDate = deal.date ? new Date(deal.date) : new Date();
-    const dateStr = dealDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    const timeStr = dealDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    const day = String(dealDate.getDate()).padStart(2, '0');
+    const month = String(dealDate.getMonth() + 1).padStart(2, '0');
+    const year = String(dealDate.getFullYear()).slice(-2);
+    const dateStr = day + '.' + month + '.' + year;
     deals.splice(dealIndex, 1);
     saveDeals(deals);
 
     // Отправляем уведомление в Telegram
     try {
-      await sendTelegramMessage(`Сделка удалена ${username}${creatorInfo}\nДата: ${dateStr} ${timeStr}`);
+      await sendTelegramMessage(`Сделка удалена ${username}${creatorInfo}\nДата: ${dateStr}`);
     } catch (error) {
       console.error('Ошибка отправки Telegram уведомления:', error);
     }
@@ -1228,7 +1261,7 @@ app.post('/api/goal', async (req, res) => {
     }
     
     const newGoal = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2),
       text: text,
       createdAt: new Date().toISOString(),
       weekStart: weekStart.toISOString()
@@ -1594,6 +1627,132 @@ function checkGoalExpiration() {
     console.error('Ошибка проверки истечения цели:', error);
   }
 }
+
+// Получение информации о бонусах и времени до следующего вывода
+app.get('/api/bonuses', (req, res) => {
+  try {
+    const userId = req.query.userId || null;
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    
+    const tasks = loadTasks();
+    const withdrawals = loadBonusWithdrawals();
+    const userIdStr = String(userId);
+    
+    // Подсчитываем общую сумму бонусов
+    let totalBonus = 0;
+    tasks.forEach(task => {
+      if (task.completedBy && task.completedBy.includes(userIdStr)) {
+        totalBonus += task.reward || 0;
+      }
+    });
+    
+    // Проверяем последний вывод
+    const lastWithdrawal = withdrawals[userIdStr];
+    const now = new Date();
+    let canWithdraw = true;
+    let timeUntilNext = 0;
+    
+    if (lastWithdrawal && lastWithdrawal.lastWithdrawAt) {
+      const lastWithdrawDate = new Date(lastWithdrawal.lastWithdrawAt);
+      const daysSinceLastWithdraw = Math.floor((now - lastWithdrawDate) / (1000 * 60 * 60 * 24));
+      
+      if (daysSinceLastWithdraw < 15) {
+        canWithdraw = false;
+        timeUntilNext = 15 - daysSinceLastWithdraw;
+      }
+    }
+    
+    res.json({
+      totalBonus: totalBonus,
+      canWithdraw: canWithdraw,
+      timeUntilNext: timeUntilNext, // дней до следующего вывода
+      lastWithdrawAt: lastWithdrawal ? lastWithdrawal.lastWithdrawAt : null
+    });
+  } catch (error) {
+    console.error('Ошибка получения информации о бонусах:', error);
+    res.status(500).json({ error: 'Ошибка получения информации о бонусах' });
+  }
+});
+
+// Вывод бонусов в личный доход
+app.post('/api/bonuses/withdraw', (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    
+    const tasks = loadTasks();
+    const withdrawals = loadBonusWithdrawals();
+    const userIdStr = String(userId);
+    
+    // Подсчитываем общую сумму бонусов
+    let totalBonus = 0;
+    tasks.forEach(task => {
+      if (task.completedBy && task.completedBy.includes(userIdStr)) {
+        totalBonus += task.reward || 0;
+      }
+    });
+    
+    if (totalBonus === 0) {
+      return res.status(400).json({ error: 'Нет бонусов для вывода' });
+    }
+    
+    // Проверяем последний вывод
+    const lastWithdrawal = withdrawals[userIdStr];
+    const now = new Date();
+    
+    if (lastWithdrawal && lastWithdrawal.lastWithdrawAt) {
+      const lastWithdrawDate = new Date(lastWithdrawal.lastWithdrawAt);
+      const daysSinceLastWithdraw = Math.floor((now - lastWithdrawDate) / (1000 * 60 * 60 * 24));
+      
+      if (daysSinceLastWithdraw < 15) {
+        const daysRemaining = 15 - daysSinceLastWithdraw;
+        return res.status(400).json({ 
+          error: `Вывод возможен только раз в 15 дней. Осталось: ${daysRemaining} ${daysRemaining === 1 ? 'день' : daysRemaining < 5 ? 'дня' : 'дней'}` 
+        });
+      }
+    }
+    
+    // Создаем сделку с типом "bonus" для добавления в личный доход
+    const deals = loadDeals();
+    const bonusDeal = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+      username: 'Бонус',
+      amount: totalBonus,
+      date: new Date().toISOString(),
+      status: 'success', // Автоматически успешная
+      telegramMessageId: null,
+      appType: 'team',
+      userId: userIdStr,
+      avatar: null,
+      createdBy: 'Система',
+      isBonus: true // Флаг, что это вывод бонусов
+    };
+    
+    deals.push(bonusDeal);
+  saveDeals(deals);
+    
+    // Сохраняем информацию о выводе
+    withdrawals[userIdStr] = {
+      userId: userIdStr,
+      lastWithdrawAt: now.toISOString(),
+      amount: totalBonus
+    };
+    saveBonusWithdrawals(withdrawals);
+    
+    res.json({ 
+      ok: true, 
+      amount: totalBonus,
+      message: 'Бонусы успешно выведены в личный доход'
+    });
+  } catch (error) {
+    console.error('Ошибка вывода бонусов:', error);
+    res.status(500).json({ error: 'Ошибка вывода бонусов' });
+  }
+});
 
 // Проверяем истечение цели каждые 30 минут (для более быстрого уведомления)
 setInterval(checkGoalExpiration, 30 * 60 * 1000);
