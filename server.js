@@ -983,7 +983,7 @@ app.post('/api/deals', async (req, res) => {
               // Отправляем напоминание в ЛС пользователю, который создал сделку
               // Напоминание приходит независимо от статуса сделки (успешна или провалена)
               const linkInfo = currentDeal.link ? `\n\nСсылка: ${currentDeal.link}` : '';
-              const reminderMessage = `⏰ Напоминание!\n\nНе забудьте связаться с ${usernameFormatted}${linkInfo}\n\nСделка создана 5 дней назад.`;
+              const reminderMessage = `⏰ Напоминание!\n\nНе забудьте связаться с ${usernameFormatted}${linkInfo}\n\nСделка создана 5 минут назад.`;
               
               // Для командного приложения используем NOTIFICATION_BOT_TOKEN (общий бот)
               await sendNotificationToUser(targetUserId, reminderMessage, NOTIFICATION_BOT_TOKEN);
@@ -994,8 +994,8 @@ app.post('/api/deals', async (req, res) => {
           } catch (error) {
             console.error('❌ Ошибка отправки напоминания о сделке:', error);
           }
-        }, 5 * 24 * 60 * 60 * 1000); // 5 дней
-        console.log('⏰ Запланировано напоминание о сделке через 5 дней для пользователя', targetUserId, 'сделка:', id, 'appType:', appType);
+        }, 5 * 60 * 1000); // 5 минут = 5 * 60 * 1000 миллисекунд
+        console.log('⏰ Запланировано напоминание о сделке через 5 минут для пользователя', targetUserId, 'сделка:', id, 'appType:', appType);
       } else {
         console.log('⚠️ userId не указан, напоминание (team) не будет отправлено для сделки', id);
       }
