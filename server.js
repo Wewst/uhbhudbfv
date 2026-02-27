@@ -314,7 +314,7 @@ async function sendNotificationToAdmin(text) {
   });
 }
 
-async function sendNotificationToUser(userId, text) {
+async function sendNotificationToUser(userId, text, botTokenOverride) {
   if (!userId) {
     console.log('⚠️ userId не указан, уведомление не отправлено');
     return false;
@@ -326,19 +326,22 @@ async function sendNotificationToUser(userId, text) {
     return false;
   }
   
-  if (!NOTIFICATION_BOT_TOKEN) {
-    console.error('❌ NOTIFICATION_BOT_TOKEN не установлен');
+  // Выбираем токен бота: либо переданный явно, либо общий бот по умолчанию
+  const tokenToUse = botTokenOverride || NOTIFICATION_BOT_TOKEN;
+
+  if (!tokenToUse) {
+    console.error('❌ Токен бота для уведомлений не установлен');
     return false;
   }
   
-  const url = `https://api.telegram.org/bot${NOTIFICATION_BOT_TOKEN}/sendMessage`;
+  const url = `https://api.telegram.org/bot${tokenToUse}/sendMessage`;
   const data = JSON.stringify({
     chat_id: String(userId),
     text: text.trim(),
     parse_mode: 'HTML'
   });
 
-  console.log('📤 Попытка отправки уведомления пользователю', userId, 'через бота', NOTIFICATION_BOT_TOKEN.substring(0, 10) + '...');
+  console.log('📤 Попытка отправки уведомления пользователю', userId, 'через бота', tokenToUse.substring(0, 10) + '...');
 
   return new Promise((resolve) => {
     const urlObj = new URL(url);
