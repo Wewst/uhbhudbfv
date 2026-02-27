@@ -967,38 +967,40 @@ app.post('/api/deals', async (req, res) => {
       console.error('Ошибка отправки Telegram уведомления:', error);
     }
 
-    // Планируем напоминание через 5 минут (для всех приложений)
-    // Если userId не передан, но это админское приложение - используем ADMIN_USER_ID
-    const targetUserId = userId || (appType === 'admin' ? ADMIN_USER_ID : null);
-    
-    if (targetUserId) {
-      setTimeout(async () => {
-        try {
-          // Проверяем, что сделка все еще существует (независимо от статуса)
-          const currentDeals = loadDeals();
-          const currentDeal = currentDeals.find(d => d.id === id);
-          
-          if (currentDeal) {
-            // Отправляем напоминание в ЛС пользователю, который создал сделку
-            // Напоминание приходит независимо от статуса сделки (успешна или провалена)
-            const linkInfo = currentDeal.link ? `\n\nСсылка: ${currentDeal.link}` : '';
-            const reminderMessage = `⏰ Напоминание!\n\nНе забудьте связаться с ${usernameFormatted}${linkInfo}\n\nСделка создана 5 минут назад.`;
+    // Напоминание о сделке оставляем только для общего (командного) бота
+    // Для админского приложения напоминания отключены
+    if (appType === 'team') {
+      const targetUserId = userId ? String(userId) : null;
+      
+      if (targetUserId) {
+        setTimeout(async () => {
+          try {
+            // Проверяем, что сделка все еще существует (независимо от статуса)
+            const currentDeals = loadDeals();
+            const currentDeal = currentDeals.find(d => d.id === id);
             
-            // Для админского приложения используем TELEGRAM_BOT_TOKEN (админский бот)
-            // Для командного приложения используем NOTIFICATION_BOT_TOKEN (общий бот)
-            const botToken = appType === 'admin' ? TELEGRAM_BOT_TOKEN : NOTIFICATION_BOT_TOKEN;
-            await sendNotificationToUser(String(targetUserId), reminderMessage, botToken);
-            console.log('✅ Напоминание о сделке отправлено пользователю', targetUserId, 'для сделки', id, 'через бот', appType === 'admin' ? 'админский' : 'общий');
-          } else {
-            console.log('⚠️ Сделка', id, 'не найдена, напоминание не отправлено (возможно, сделка была удалена)');
+            if (currentDeal) {
+              // Отправляем напоминание в ЛС пользователю, который создал сделку
+              // Напоминание приходит независимо от статуса сделки (успешна или провалена)
+              const linkInfo = currentDeal.link ? `\n\nСсылка: ${currentDeal.link}` : '';
+              const reminderMessage = `⏰ Напоминание!\n\nНе забудьте связаться с ${usernameFormatted}${linkInfo}\n\nСделка создана 5 дней назад.`;
+              
+              // Для командного приложения используем NOTIFICATION_BOT_TOKEN (общий бот)
+              await sendNotificationToUser(targetUserId, reminderMessage, NOTIFICATION_BOT_TOKEN);
+              console.log('✅ Напоминание о сделке (team) отправлено пользователю', targetUserId, 'для сделки', id);
+            } else {
+              console.log('⚠️ Сделка', id, 'не найдена, напоминание не отправлено (возможно, сделка была удалена)');
+            }
+          } catch (error) {
+            console.error('❌ Ошибка отправки напоминания о сделке:', error);
           }
-        } catch (error) {
-          console.error('❌ Ошибка отправки напоминания о сделке:', error);
-        }
-      }, 5 * 60 * 1000); // 5 минут = 5 * 60 * 1000 миллисекунд
-      console.log('⏰ Запланировано напоминание о сделке через 5 минут для пользователя', targetUserId, 'сделка:', id, 'appType:', appType);
-    } else {
-      console.log('⚠️ userId не указан и ADMIN_USER_ID не установлен, напоминание не будет отправлено для сделки', id);
+        }, 5 * 24 * 60 * 60 * 1000); // 5 дней
+        console.log('⏰ Запланировано напоминание о сделке через 5 дней для пользователя', targetUserId, 'сделка:', id, 'appType:', appType);
+      } else {
+        console.log('⚠️ userId не указан, напоминание (team) не будет отправлено для сделки', id);
+      }
+    } else if (appType === 'admin') {
+      console.log('ℹ️ Админское приложение: напоминание о сделке не планируется (отключено по запросу)');
     }
 
     // Возвращаем все сделки отсортированные по дате
